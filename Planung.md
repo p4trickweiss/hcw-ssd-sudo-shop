@@ -27,7 +27,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
   *Umsetzung:* Es werden mindestens 5 Produkte aus den Testdaten mit Preis im Format `12,90 €` angezeigt.
   *Prüfung:* Nach dem Reset `/products` öffnen und ≥ 5 Einträge mit ID, Name und Preis zählen.
 - US01-AK2: Jedes Produkt kann aus dem Katalog heraus ausgewählt werden; die Auswahl öffnet die passende Detailansicht.
-  *Umsetzung:* Ein Klick auf ein Produkt öffnet `/products/[id]` mit derselben ID.
+  *Umsetzung:* Ein Klick auf ein Produkt öffnet `/products/[id]` mit derselben ID (Ansicht: siehe US02-AK1).
 - US01-AK3: Katalog und Detailansicht verwenden dieselben Produktdaten und Preise.
   *Umsetzung:* Beide lesen aus derselben Tabelle `products`; es gibt keine doppelten Preisangaben im Code.
   *Prüfung:* Preis in der DB ändern, dann zeigen beide Seiten den neuen Preis.
@@ -76,7 +76,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 > Als Betreiberin oder Betreiber möchte ich den Shop zurücksetzen, damit Einkäufe wiederholt getestet werden können.
 
 - US08-AK1: Ein dokumentierter Befehl, ein Skript oder eine Oberfläche stellt Produkte und Testkonten wieder her und setzt Warenkörbe und Bestellungen auf den dokumentierten Ausgangszustand zurück.
-  *Umsetzung:* `./scripts/reset.sh` leert alle Tabellen und spielt `db/testdaten.sql` ein (Produkte, Testkonten, Bestellungen inkl. Challenge-Daten). Die Flags werden dabei aus `.env` eingesetzt.
+  *Umsetzung:* `./scripts/reset.sh` leert alle Tabellen und spielt `db/testdaten.sql` ein (Produkte, Testkonten, Bestellungen inkl. Challenge-Daten). Danach setzt `db/flags.sql` die echten Flags.
 - US08-AK2: Nach dem Reset funktionieren Testkonten und der normale Kaufprozess erneut.
 - US08-AK3: Das Git-Repository beschreibt Voraussetzungen, Start und Reset so, dass die Lehrperson sie ausführen kann.
   *Umsetzung:* Das README beschreibt Voraussetzungen, Start, Stop und Reset (siehe S2.7).
@@ -107,7 +107,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 
 | Schutzobjekt | Vertraulichkeit | Integrität  | Begründung |
 |---|---|---|---|
-| Server/VM, Docker-Host | hoch | hoch | Kompromittierung würde Proxmox-Umgebung und andere Gruppen gefährden |
+| Server/VM, Docker-Host | hoch | hoch | Angreifer kann den ganzen Shop kontrollieren und andere VMs im WireGuard-Netz erreichen |
 | Datenbank-Zugang, Secrets (`.env`) | hoch | hoch | Infrastruktur-Zugangsdaten, nicht Teil des Challenge-Bereichs |
 | Kundenkonten / Passwörter | mittel | hoch | gehasht |
 | Bestellungen, Warenkörbe | mittel | mittel | absichtlich Teil der Challenges, per Reset wiederherstellbar |
@@ -141,6 +141,7 @@ flowchart LR
     subgraph VM["Ubuntu-VM 10.12.25.25 (Proxmox) – Vertrauensgrenze 2: Host"]
         ufw{{Firewall ufw<br/>offen: 80/tcp, 22/tcp}}
         reset[[scripts/reset.sh]]
+        seed[/"db/testdaten.sql<br/>db/flags.sql"/]
         subgraph DOCKER["Docker Compose – Vertrauensgrenze 3: Container"]
             app[SvelteKit App – adapter-node :3000<br/>Shop + Challenge-Plattform]
             subgraph BE["Netz: backend (internal: true)"]
@@ -154,7 +155,8 @@ flowchart LR
     app -- "SQL :5432 (parametrisiert)" --> db
     op -- "SSH :22 (Passwort, fail2ban)" --> ufw
     ufw -.-> reset
-    reset -. "docker compose exec db psql -f testdaten.sql" .-> db
+    reset -. "docker compose exec db psql -f /seed/…" .-> db
+    seed -. "Bind Mount ./db → /seed" .-> db
 ```
 
 **Erklärung des Diagramms**
@@ -167,6 +169,7 @@ Eine Anfrage läuft so: Browser → WireGuard → VM `10.12.25.25` → Firewall 
 - **SvelteKit-App:** Unsere Anwendung (Shop + Challenge-Plattform) läuft im Container auf Port 3000. Docker leitet Port 80 der VM auf Port 3000 des Containers weiter (`ports: "80:3000"`). Die App läuft dadurch ohne Root-Rechte und ist trotzdem unter der normalen Web-Adresse erreichbar.
 - **PostgreSQL:** Die Datenbank läuft in einem eigenen Container in einem internen Docker-Netz. Nur die App kann sie erreichen, von außen ist sie weder über die VM noch über das Netz erreichbar.
 - **reset.sh:** Ein Skript auf der VM, das wir nach dem SSH-Login ausführen. Es spielt die Testdaten neu in die Datenbank ein. Über den Browser ist es nicht erreichbar.
+- **Testdaten und Flags:** Der Ordner `./db` der VM ist per Bind Mount nur lesend unter `/seed` im DB-Container eingebunden. `reset.sh` lässt `psql` im Container zuerst `/seed/testdaten.sql` (aus dem Repo) und dann `/seed/flags.sql` (echte Flags, nur auf der VM) ausführen.
 
 Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Administration durch uns.
 
@@ -198,7 +201,8 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 - Docker-Portfreigaben (`ports:`) umgehen ufw. Deshalb wird in `compose.yaml` ausschließlich `80:3000` für die App veröffentlicht.
 - Container laufen als Nicht-Root-User (`user: node`) mit `read_only: true`, `cap_drop: [ALL]` und `security_opt: [no-new-privileges:true]`. Der Docker-Socket wird nicht gemountet.
 - Ressourcenlimits (`mem_limit`, `cpus`, `pids_limit`), damit eine Überlast den Host nicht lahmlegt
-- Secrets (DB-Passwort, Session-Secret, Flags) liegen nur in `.env` auf der VM. Im Repo gibt es nur `.env.example`, und `.env` steht in `.gitignore`.
+- Secrets (DB-Passwort, Session-Secret) liegen nur in `.env`, die Flags nur in `db/flags.sql`, beide ausschließlich auf der VM. Im Repo gibt es nur `.env.example` und `db/flags.example.sql`; `.env` und `db/flags.sql` stehen in `.gitignore`.
+- Einziger Bind Mount: `./db` → `/seed` im DB-Container, nur lesend. Die App hat keinen Mount.
 - SSH: Login mit Benutzername und starkem, individuellem Passwort; `PermitRootLogin no`; `fail2ban` sperrt IP-Adressen nach mehreren fehlgeschlagenen Login-Versuchen. Unattended Upgrades sind aktiv.
 
 **Abgrenzung gegenüber anderen Gruppen und Hochschulsystemen**
@@ -327,11 +331,11 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 **Git-Repository und Zugriff**
 - GitHub: `p4trickweiss/hcw-ssd-sudo-shop` (**öffentlich**). Jede Person, auch die Lehrperson, kann es ohne Einladung lesen. Schreibzugriff haben nur die vier Gruppenmitglieder.
 - Folgen der Öffentlichkeit:
-  - Flags stehen **nicht** im Repo. `db/testdaten.sql` enthält nur Platzhalter (`{{FLAG_C1}}` usw.); `reset.sh` ersetzt sie beim Einspielen durch die Werte aus `.env` auf der VM (`FLAG_C1`, `FLAG_C2`, `FLAG_C3`).
+  - Flags stehen **nicht** im Repo. `db/testdaten.sql` enthält keine Flags. Die echten Flags stehen in `db/flags.sql`, die nur auf der VM liegt (`.gitignore`); im Repo gibt es nur `db/flags.example.sql` mit Dummy-Werten.
   - Musterlösungen liegen nicht im Repo, auch nicht in einem Branch (Branches sind ebenfalls öffentlich).
   - Der Quellcode inkl. der Schwachstellen ist einsehbar. Das nehmen wir bewusst in Kauf: Die Challenges bleiben lösbar und lehrreich, ein Blick in den Code ersetzt nicht das Ausnutzen im laufenden Shop, und ohne Flag gibt es keinen Erfolgsnachweis.
 - Workflow: Feature-Branches (`feature/…`), Pull Request, Merge auf `main`
-- Musterlösungen folgen separat per E-Mail an die Lehrperson. `.env` wird nie committet.
+- Musterlösungen folgen separat per E-Mail an die Lehrperson. `.env` und `db/flags.sql` werden nie committet.
 
 **Laufzeitvoraussetzungen (VM)**
 - Ubuntu Server (Proxmox-VM), Docker Engine ≥ 27 mit Compose-Plugin, git, ufw, fail2ban
@@ -342,9 +346,10 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 ```bash
 git clone git@github.com:p4trickweiss/hcw-ssd-sudo-shop.git && cd hcw-ssd-sudo-shop
 cp .env.example .env            # Secrets lokal setzen, nicht committen
+cp db/flags.example.sql db/flags.sql   # echte Flags eintragen, nicht committen
 docker compose up -d --build    # Start
 docker compose ps               # Status / Healthcheck
 docker compose down             # Stop (Daten bleiben erhalten)
-./scripts/reset.sh              # Reset: Tabellen leeren + db/testdaten.sql einspielen
+./scripts/reset.sh              # Reset: Tabellen leeren + db/testdaten.sql und db/flags.sql einspielen
 ```
 

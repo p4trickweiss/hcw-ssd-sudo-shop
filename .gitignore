@@ -21,3 +21,11 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# IDE
+.vscode
+.idea
+
+# Lokale Challenge-Daten
+db/flags.sql
+private/

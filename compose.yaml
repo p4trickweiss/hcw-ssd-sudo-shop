@@ -1,0 +1,46 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        APP_ORIGIN: http://127.0.0.1:4173
+    environment:
+      DATABASE_URL: postgresql://sudo:sudo_local_only@db:5432/sudo_shop
+      SECURE_MODE: ${SECURE_MODE:-false}
+    ports:
+      - '127.0.0.1:4173:4173'
+    volumes:
+      - flags_data:/app/local
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4173/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sudo
+      POSTGRES_PASSWORD: sudo_local_only
+      POSTGRES_DB: sudo_shop
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sudo -d sudo_shop']
+      interval: 3s
+      timeout: 3s
+      retries: 15
+volumes:
+  postgres_data:
+  flags_data:

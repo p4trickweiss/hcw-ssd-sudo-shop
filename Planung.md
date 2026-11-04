@@ -139,24 +139,29 @@ flowchart LR
     end
 
     subgraph VM["Ubuntu-VM 10.12.25.25 (Proxmox) – Vertrauensgrenze 2: Host"]
-        ufw{{Firewall ufw<br/>offen: 80/tcp, 22/tcp}}
+        ufw{{"Firewall ufw<br/>offen: 80/tcp, 22/tcp"}}
         reset[[scripts/reset.sh]]
         seed[/"db/testdaten.sql<br/>db/flags.sql"/]
+
         subgraph DOCKER["Docker Compose – Vertrauensgrenze 3: Container"]
-            app[SvelteKit App – adapter-node :3000<br/>Shop + Challenge-Plattform]
+            app["SvelteKit App – adapter-node :3000<br/>Shop + Challenge-Plattform"]
+
             subgraph BE["Netz: backend (internal: true)"]
-                db[(PostgreSQL 17<br/>users, products, cart_items,<br/>orders, order_items,<br/>challenges, solves, sessions,<br/>xss_tokens)]
+                db[("PostgreSQL 17<br/>users, products, cart_items,<br/>orders, order_items,<br/>challenges, solves, sessions,<br/>xss_tokens")]
             end
+
+            volume[("Docker Volume: postgres_data<br/>Persistente Datenbankdateien")]
         end
     end
 
     user -- "HTTP :80" --> ufw
     ufw -- "Port 80 → 3000" --> app
     app -- "SQL :5432 (parametrisiert)" --> db
+    db -- "Daten persistent speichern" --> volume
     op -- "SSH :22 (Passwort, fail2ban)" --> ufw
     ufw -.-> reset
     reset -. "docker compose exec db psql -f /seed/…" .-> db
-    seed -. "Bind Mount ./db → /seed" .-> db
+    seed -. "Bind Mount ./db → /seed (read-only)" .-> db
 ```
 
 **Erklärung des Diagramms**
@@ -167,8 +172,7 @@ Eine Anfrage läuft so: Browser → WireGuard → VM `10.12.25.25` → Firewall 
 - **Betreiber SSH:** Wir als Gruppe loggen uns per SSH (Benutzername + Passwort) auf der VM ein, um den Shop zu starten, zu stoppen und zurückzusetzen.
 - **Firewall (ufw):** Die Standard-Firewall von Ubuntu legt fest, auf welchen Ports die VM Verbindungen von außen annimmt. Offen sind nur **Port 80** (HTTP, der Shop) und **Port 22** (SSH, Administration). Alle anderen Ports, z. B. 5432 für die Datenbank, sind zu.
 - **SvelteKit-App:** Unsere Anwendung (Shop + Challenge-Plattform) läuft im Container auf Port 3000. Docker leitet Port 80 der VM auf Port 3000 des Containers weiter (`ports: "80:3000"`). Die App läuft dadurch ohne Root-Rechte und ist trotzdem unter der normalen Web-Adresse erreichbar.
-- **PostgreSQL:** Die Datenbank läuft in einem eigenen Container in einem internen Docker-Netz. Nur die App kann sie erreichen, von außen ist sie weder über die VM noch über das Netz erreichbar.
-- **reset.sh:** Ein Skript auf der VM, das wir nach dem SSH-Login ausführen. Es spielt die Testdaten neu in die Datenbank ein. Über den Browser ist es nicht erreichbar.
+- **PostgreSQL:** Die Datenbank läuft in einem eigenen Container in einem internen Docker-Netz. Nur die App kann sie erreichen. Die Datenbankdateien werden in einem persistenten, benannten Docker-Volume `postgres_data` gespeichert. Dadurch bleiben die Daten auch nach einem Neustart oder `docker compose down` erhalten.- **reset.sh:** Ein Skript auf der VM, das wir nach dem SSH-Login ausführen. Es spielt die Testdaten neu in die Datenbank ein. Über den Browser ist es nicht erreichbar.
 - **Testdaten und Flags:** Der Ordner `./db` der VM ist per Bind Mount nur lesend unter `/seed` im DB-Container eingebunden. `reset.sh` lässt `psql` im Container zuerst `/seed/testdaten.sql` (aus dem Repo) und dann `/seed/flags.sql` (echte Flags, nur auf der VM) ausführen.
 
 Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Administration durch uns.
@@ -202,7 +206,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 - Container laufen als Nicht-Root-User (`user: node`) mit `read_only: true`, `cap_drop: [ALL]` und `security_opt: [no-new-privileges:true]`. Der Docker-Socket wird nicht gemountet.
 - Ressourcenlimits (`mem_limit`, `cpus`, `pids_limit`), damit eine Überlast den Host nicht lahmlegt
 - Secrets (DB-Passwort, Session-Secret) liegen nur in `.env`, die Flags nur in `db/flags.sql`, beide ausschließlich auf der VM. Im Repo gibt es nur `.env.example` und `db/flags.example.sql`; `.env` und `db/flags.sql` stehen in `.gitignore`.
-- Einziger Bind Mount: `./db` → `/seed` im DB-Container, nur lesend. Die App hat keinen Mount.
+- Volumes: PostgreSQL verwendet das persistente Docker-Volume `postgres_data` für die Datenbankdateien. Zusätzlich wird `./db` als schreibgeschützter Bind Mount unter `/seed` eingebunden, um Testdaten und Flags für den Reset bereitzustellen. Die SvelteKit-App erhält keinen Host-Mount.
 - SSH: Login mit Benutzername und starkem, individuellem Passwort; `PermitRootLogin no`; `fail2ban` sperrt IP-Adressen nach mehreren fehlgeschlagenen Login-Versuchen. Unattended Upgrades sind aktiv.
 
 **Abgrenzung gegenüber anderen Gruppen und Hochschulsystemen**
@@ -262,47 +266,47 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 | **Sichere Korrektur** | Query auf `WHERE id = $1 AND user_id = $2` (Session-User) ändern; bei keinem Treffer 404 statt 403, damit die Existenz nicht verraten wird |
 | **Prüfszenario** | Als `alice` die ID einer Bestellung von `bob` aufrufen → **erwartet: 404**. Eigene Bestellung → 200. Ohne Login → Redirect `/login`. |
 
-### C2 – „Suchmaschinen-Optimierung“ (reflektiertes XSS)
+### C2 – „Suchmaschinen-Optimierung“ (reflektiertes XSS / Datenleck)
 
 | Feld | Inhalt |
 |---|---|
 | **OWASP** | A05:2025 – Injection (vorgegebene Kategorie) |
-| **CWE** | [CWE-79: Improper Neutralization of Input During Web Page Generation (Cross-site Scripting)](https://cwe.mitre.org/data/definitions/79.html). Der Suchbegriff aus `?q=` wird unkodiert als HTML ausgegeben (reflektiert, Typ 1). |
-| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2020-5272](https://www.cve.org/CVERecord?id=CVE-2020-5272). Originalprodukt: PrestaShop. Reflektiertes XSS auf der Suchseite über die Parameter `alias` und `search`. |
-| **Lernziel** | Verstehen, warum Ausgaben kontextgerecht kodiert werden müssen, und wie Frameworks (Svelte-Escaping) und CSP davor schützen |
-| **Ursache** | Ausgabe von „Ergebnisse für: …“ über `{@html}` statt über normales Text-Binding; gelockerte CSP auf `/search` |
+| **CWE** | [CWE-79: Improper Neutralization of Input During Web Page Generation (Cross-site Scripting)](https://cwe.mitre.org/data/definitions/79.html). Der Suchbegriff aus `?q=` wird unkodiert als HTML ausgegeben (reflektiertes XSS). |
+| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2020-5272](https://www.cve.org/CVERecord?id=CVE-2020-5272). Originalprodukt: PrestaShop; reflektiertes XSS auf der Suchseite über Suchparameter. |
+| **Lernziel** | Zeigen, dass XSS mehr als ein `alert()` auslösen kann: Fremder JavaScript-Code läuft im Kontext eines eingeloggten Shopkunden und kann fiktive private Shopdaten offenlegen. |
+| **Ursache** | Die Suchseite gibt den Parameter `q` über `{@html}` statt als escaped Text aus; die CSP ist ausschließlich auf `/search` für die Challenge gelockert. |
 | **Verletzte Regel** | SR-02 |
-| **Shopbezug** | Produktsuche `/search?q=` (optionale Erweiterung „Suche“) |
-| **Auftrag** | „Bring die Suchseite dazu, eingeschleusten JavaScript-Code auszuführen, der `alert()` aufruft.“ |
-| **Einstieg / Vorbedingungen** | Suchfeld im Header; kein Login nötig |
-| **Testdaten** | vordefinierte Produkte |
-| **Hinweise** | 1) „Wie wird dein Suchbegriff auf der Ergebnisseite dargestellt?“ |
-| **Erfolgskriterium** | `alert()`-Nachweis mit Serverprüfung: 1) Beim Ausliefern von `/search` erzeugt der Server ein einmaliges Token (gültig 5 Minuten), speichert es mit dem Suchbegriff in `xss_tokens` und bettet es als `data-`Attribut in die Seite ein. 2) Ein Prüfskript auf der Suchseite überwacht `alert()`. Wird die Funktion aufgerufen, sendet es Token und Suchbegriff an `POST /api/challenges/c2/verify`. 3) Der Server gibt das Flag `SUDO{…}` nur zurück, wenn das Token gültig und unverbraucht ist, zum Suchbegriff gehört und der Suchbegriff laut HTML-Parser tatsächlich Markup enthält. 4) Die Seite zeigt das Flag in einem Banner; es wird auf `/challenges` akzeptiert und in `solves` gespeichert. Das Flag steht nie im HTML-Quelltext oder in einem Cookie; ein direkter `alert()`-Aufruf über die Browser-Konsole scheitert an der Markup-Prüfung. |
-| **Sicherheitswirkung** | Ausführung von fremdem Code im Browser anderer Nutzer, z. B. Aktionen im Namen des Opfers. Die Wirkung bleibt auf den Browser beschränkt, der Server ist nicht betroffen. |
-| **Reset** | Die Schwachstelle selbst ist zustandslos (reflektiert). `reset.sh` leert `solves` und `xss_tokens`; abgelaufene bzw. verbrauchte Tokens werden zusätzlich beim Prüfen gelöscht. |
-| **Sichere Korrektur** | `{@html …}` durch `{query}` ersetzen (automatisches Escaping); restriktive CSP `script-src 'self'` auch auf `/search` |
-| **Prüfszenario** | `/search?q=<b>test</b>` → **erwartet:** wörtlich `<b>test</b>` als Text sichtbar, kein fett formatierter Text. HTML-Quelltext enthält `&lt;b&gt;`. Response-Header enthält die CSP. |
+| **Shopbezug** | Produktsuche `/search?q=…` und private, fiktive Bestellnotiz eines Kunden |
+| **Auftrag** | „Präpariere einen Suchlink, über den du die private Bestellnotiz eines anderen Testkunden erhältst.“ |
+| **Einstieg / Vorbedingungen** | Alice ist Angreiferin und erstellt einen manipulierten Suchlink. Bob ist als fiktiver Kunde in einem separaten Browserprofil eingeloggt und öffnet den Link bei der manuellen Vorführung. Kein automatischer Opfer-Bot nötig. |
+| **Testdaten** | `alice`, `bob`; Bob besitzt eine nur für seine Sitzung zugängliche fiktive VIP-Bestellnotiz (nicht identisch mit dem Flag aus C1). |
+| **Hinweise** | 1) „Was passiert mit deinem Suchbegriff im HTML?“ 2) „Welche Shopdaten darf Bob sehen, Alice aber nicht?“ |
+| **Erfolgskriterium** | Alice verknüpft einen Angriff mit ihrer Challenge-Sitzung und platziert den entsprechenden Code im Suchlink. Der in Bobs Browser ausgeführte Code ruft mit **Bobs Sitzung** die private Notiz von einer nur für Bob autorisierten Shoproute ab und sendet sie per `POST /api/challenges/c2/collect` an den **eigenen Shop**. Der Collector nimmt nur die vorgesehenen fiktiven Challenge-Daten an, prüft die Zuordnung zu Alices Angriff sowie Bobs Sitzung und speichert den Leak. Alice sieht die abgefangene Notiz in ihrer Challenge-Ansicht und erhält das Flag `SUDO{…}`. Ein bloßer `alert()` genügt nicht. |
+| **Sicherheitswirkung** | Verlust der Vertraulichkeit privater Kundendaten durch JavaScript-Ausführung in einer fremden Browsersitzung. Keine Übertragung an externe Domains oder Zugriff auf echte Daten. |
+| **Reset** | `./scripts/reset.sh` stellt Bobs fiktive Notiz wieder her und löscht Angriffszuordnungen, gesammelte Leaks und `solves`. |
+| **Sichere Korrektur** | `{@html …}` durch normales `{query}` ersetzen; restriktive CSP auch auf `/search` aktivieren. |
+| **Prüfszenario** | Nach der Korrektur zeigt `/search?q=<b>test</b>` die Zeichenfolge nur als Text; ein präparierter Link führt keinen Code mehr aus und erzeugt keinen neuen Eintrag im Collector. |
 
-### C3 – „Rabatt auf Minus“ (negative Menge)
+### C3 – „Gutschein-Chaos“ (fünffacher Rabatt)
 
 | Feld | Inhalt |
 |---|---|
 | **OWASP** | A06:2025 – Insecure Design |
-| **CWE** | [CWE-1284: Improper Validation of Specified Quantity in Input](https://cwe.mitre.org/data/definitions/1284.html). Die Menge wird nicht auf den erlaubten Bereich (ganze Zahl ≥ 1) geprüft. Verwandt: CWE-840 Business Logic Errors. |
-| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2026-44826](https://www.cve.org/CVERecord?id=CVE-2026-44826). Originalprodukt: Vvveb CMS, betroffene Versionen < 1.0.8.2. Der Endpunkt zum Hinzufügen in den Warenkorb prüft das Vorzeichen der Menge nicht, wodurch Zwischen- und Gesamtsummen negativ werden und der Checkout die Bestellung akzeptiert. |
-| **Lernziel** | Geschäftsregeln serverseitig durchsetzen; clientseitige Validierung (`min="1"`) ist keine Sicherheitsmaßnahme |
-| **Ursache** | Die Form-Action übernimmt `quantity` ungeprüft (`parseInt`), die DB hat kein `CHECK`, und der Checkout summiert blind |
-| **Verletzte Regel** | SR-03 |
-| **Shopbezug** | Warenkorb und Checkout (US03, US04) |
-| **Auftrag** | „Das Produkt ‚Golden Labubu (Flag)‘ kostet 1.337,00 €. Dein Guthaben beträgt 20,00 €. Kauf es trotzdem.“ |
-| **Einstieg / Vorbedingungen** | Login als `bob`; fiktives Guthaben von 20 € pro Konto (Spalte `users.balance`) |
-| **Testdaten** | `bob`, Produkt „Golden Labubu (Flag)“ |
-| **Hinweise** | 1) „Validiert der Server wirklich alles, was das Formular erlaubt?“ |
-| **Erfolgskriterium** | Eine erfolgreiche Bestellung, die das Flag-Produkt enthält, zeigt auf der Bestätigungsseite das Flag. Die Bestellung ist in `orders` nachweisbar. |
-| **Sicherheitswirkung** | Integritätsverlust: Waren werden unter Wert bzw. kostenlos „gekauft“. |
-| **Reset** | `reset.sh` setzt Warenkörbe, Bestellungen, Guthaben und `solves` zurück |
-| **Sichere Korrektur** | Serverseitiges Schema `quantity: z.coerce.number().int().min(1).max(99)`; DB-Constraint `CHECK (quantity > 0)` auf `cart_items` und `order_items`; Checkout lehnt Bestellungen mit Summe ≤ 0 oder einzelnen Positionen ≤ 0 ab |
-| **Prüfszenario** | Mengenänderung mit `0`, `-1`, `1.5`, `abc` → **erwartet:** 400 „Ungültige Menge“, Warenkorb unverändert. Direkter SQL-Insert mit `-1` → Constraint-Fehler. Gültige Menge `2` → 200. |
+| **CWE** | [CWE-841: Improper Enforcement of Behavioral Workflow](https://cwe.mitre.org/data/definitions/841.html). Die Geschäftslogik erzwingt die vorgesehene Regel zur einmaligen Gutscheineinlösung nicht. Ergänzend: [CWE-799: Improper Control of Interaction Frequency](https://cwe.mitre.org/data/definitions/799.html) für die unbegrenzte Wiederholung der Einlöseaktion. |
+| **CVE** | **Keine CVE – eigene Umsetzung.** Die bisherige CVE zu negativen Warenkorb-Mengen passt nicht mehr zu diesem Szenario. |
+| **Lernziel** | Fehlende Geschäftsregeln im Design erkennen: Einzeln gültige Gutscheinanwendungen führen durch unerlaubte Kombination zu einem falschen Bestellbetrag. |
+| **Ursache** | Beim Entwurf des Checkout-Prozesses wurde nicht festgelegt bzw. durchgesetzt, dass derselbe Gutschein höchstens einmal pro Bestellung gelten darf. Die Anwendung akzeptiert jede erneute Einlösung als zusätzlichen Rabatt. |
+| **Verletzte Regel** | SR-03 (fehlende verbindliche Gutschein- und Rabattregeln) |
+| **Shopbezug** | Gutscheine, Warenkorb und simulierter Checkout (US03, US04) |
+| **Auftrag** | „Das Produkt ‚Golden Labubu (Flag)‘ kostet 1.337,00 €. Dein Guthaben beträgt 20,00 €. Nutze den Gutscheinfehler, um es trotzdem zu bestellen.“ |
+| **Einstieg / Vorbedingungen** | Login als `bob`; fiktives Guthaben 20,00 € (`users.balance`); Produkt „Golden Labubu (Flag)“ im Warenkorb |
+| **Testdaten** | Gutschein mit 20 % Rabatt, der laut Geschäftsregel pro Bestellung **nur einmal** angewendet werden dürfte. Preise und Rabatte werden als ganze Cent berechnet. |
+| **Hinweise** | 1) „Was passiert, wenn du denselben Gutscheincode erneut einlöst?“ |
+| **Erfolgskriterium** | Der verwundbare Shop akzeptiert den **gleichen 20-%-Code fünfmal**. Jede Anwendung zieht 20 % des **ursprünglichen** Produktpreises ab: 5 × 267,40 € = 1.337,00 € Rabatt. Endbetrag: 0,00 €. Bob kann das Flag-Produkt erfolgreich simuliert bestellen; Bestellung und Rabattpositionen sind in der DB nachvollziehbar. Die Bestellbestätigung zeigt das Flag `SUDO{…}`. |
+| **Sicherheitswirkung** | Integritätsverlust der Preis- und Bestelllogik: Ein hochpreisiges Produkt wird aufgrund einer unzulässigen Rabattkombination kostenlos bestellt. |
+| **Reset** | `./scripts/reset.sh` stellt Gutscheine, Warenkörbe, Bestellungen, Guthaben und `solves` zurück. |
+| **Sichere Korrektur** | Eine explizite Gutscheinregel entwerfen und serverseitig beim Einlösen **und** beim Checkout erzwingen: jeder Code höchstens einmal pro Bestellung, zulässige Kombinationen festlegen, Rabatte serverseitig und transaktional neu berechnen. Normale Mengenvalidierung bleibt intakt. |
+| **Prüfszenario** | In der sicheren Variante wird die zweite Anwendung desselben Gutscheins abgelehnt, die erste bleibt gültig. Die Bestellung darf durch die fünffache Anwendung nicht mehr auf 0,00 € sinken; normale Käufe funktionieren weiterhin. |
 
 ---
 

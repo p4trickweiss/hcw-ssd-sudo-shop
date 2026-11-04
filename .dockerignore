@@ -1,0 +1,11 @@
+node_modules
+.svelte-kit
+build
+.git
+.env
+.env.*
+private
+db/flags.sql
+local
+.idea
+.vscode

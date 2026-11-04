@@ -1,0 +1,8 @@
+node_modules
+.svelte-kit
+build
+pnpm-lock.yaml
+Planung.md
+private
+.env
+db/flags.sql

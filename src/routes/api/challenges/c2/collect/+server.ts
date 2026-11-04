@@ -1,4 +1,4 @@
-import { json, error } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import { query } from '#lib/server/db.ts';
 import { requireUser, rateLimit } from '#lib/server/auth.ts';
@@ -15,5 +15,5 @@ export async function POST({ locals, request }: import('./$types').RequestEvent)
 		[parsed.data.note, parsed.data.token, user.id]
 	);
 	if (!result.rowCount) error(400, 'Angriff oder Notiz ungültig.');
-	return json({ ok: true });
+	return Response.json({ ok: true });
 }

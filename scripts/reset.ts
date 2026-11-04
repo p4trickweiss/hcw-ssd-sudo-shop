@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes, scryptSync, createHash } from 'node:crypto';
 import pg from 'pg';
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
@@ -16,19 +16,17 @@ try {
 		]);
 	}
 	const path = '/app/local/flags.sql';
-	if (!existsSync(path)) {
-		const flags = [1, 2, 3].map(() => `SUDO{${randomBytes(16).toString('hex')}}`);
-		const sha = (s: string) => createHash('sha256').update(s).digest('hex');
-		writeFileSync(
-			path,
-			`-- Lokal erzeugt; nicht committen.\n` +
-				flags
-					.map((f, i) => `INSERT INTO challenges(id,flag_hash) VALUES ('c${i + 1}','${sha(f)}');`)
-					.join('\n') +
-				`\nUPDATE orders SET note='Private Sammlernotiz: ${flags[0]}' WHERE id=1;\nUPDATE users SET private_note=private_note || ' ${flags[1]}' WHERE username='bob';\nUPDATE products SET flag_reward='${flags[2]}' WHERE is_flag=true;\n`,
-			{ mode: 0o600 }
-		);
-	}
+	const flags = [1, 2, 3].map(() => `SUDO{${randomBytes(16).toString('hex')}}`);
+	const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+	writeFileSync(
+		path,
+		`-- Lokal erzeugt; nicht committen.\n` +
+			flags
+				.map((f, i) => `INSERT INTO challenges(id,flag_hash) VALUES ('c${i + 1}','${sha(f)}');`)
+				.join('\n') +
+			`\nUPDATE orders SET note='Private Sammlernotiz: ${flags[0]}' WHERE id=1;\nUPDATE users SET private_note=private_note || ' ${flags[1]}' WHERE username='bob';\nUPDATE products SET flag_reward='${flags[2]}' WHERE is_flag=true;\n`,
+		{ mode: 0o600 }
+	);
 	await client.query(readFileSync(path, 'utf8'));
 	await client.query('COMMIT');
 	console.log('Reset erfolgreich. Testkonten: alice / bob, Passwort jeweils labubu123.');

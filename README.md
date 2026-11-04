@@ -20,7 +20,7 @@ docker compose down             # Alles stoppen, Daten bleiben erhalten
 docker compose exec app ./scripts/reset.sh  # Alle Testdaten zurücksetzen
 ```
 
-PostgreSQL-Daten und lokale Flags bleiben in den benannten Volumes `postgres_data` und `flags_data` erhalten. Ein Reset löscht Sitzungen, Bestellungen und Challenge-Fortschritt. Danach neu anmelden. Die App läuft im Container als Benutzer `node`.
+PostgreSQL-Daten und lokale Flags bleiben in den benannten Volumes `postgres_data` und `flags_data` erhalten. Ein Reset löscht Sitzungen, Bestellungen und Challenge-Fortschritt und erzeugt neue Flags. Danach neu anmelden. Die App läuft im Container als Benutzer `node`.
 
 ## Svelte lokal entwickeln, PostgreSQL in Docker
 
@@ -47,7 +47,7 @@ pnpm dev
 - Stop: `docker compose down` (Daten bleiben in den Volumes).
 - Reset: `docker compose exec app ./scripts/reset.sh`. Setzt alle Testkonten, Guthaben, Produkte, Sessions, Gutscheine, Bestellungen, Leaks und Lösungen zurück. Danach neu anmelden.
 - Ausgangszustand: sechs Produkte, drei Beispielbestellungen (Admin, Bob, Alice), Code `LABUBU20` und leere Warenkörbe. Bob startet mit 20 €, Alice mit 100 €.
-- Flags werden automatisch unter `/app/local/flags.sql` im Container erzeugt und im Volume `flags_data` gespeichert. Weitere Starts und Resets verwenden dieselben Flags.
+- Flags werden automatisch unter `/app/local/flags.sql` im Container erzeugt und im Volume `flags_data` gespeichert. Weitere Starts behalten die Flags bei. Jeder Reset erzeugt drei neue zufällige Flags; vorherige Flags sind danach ungültig.
 
 ## Funktionen und Aufbau
 

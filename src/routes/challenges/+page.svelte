@@ -54,10 +54,6 @@
 					<p>{c.objective}</p>
 					<p><a href={c.source} target="_blank" rel="noreferrer">{c.cwe}: {c.cweName} ↗</a></p>
 					<p><a href={c.cve} target="_blank" rel="noreferrer">{c.reference} ↗</a></p>
-					<p>
-						Reset: <code>./scripts/reset.sh</code> setzt den gemeinsamen Ausgangszustand inklusive Fortschritt
-						zurück.
-					</p>
 				</details>
 				{#if c.id === 'c2' && data.user?.username === 'alice'}<div class="attack-box">
 						<h3>Deine Angriffskennung</h3>

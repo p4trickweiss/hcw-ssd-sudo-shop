@@ -67,7 +67,7 @@ Preise bleiben ganzzahlige Cent. Mengen sind auf ganze Zahlen von 1 bis 99 begre
 
 ## Challenges und sichere Variante
 
-Spielbare Steckbriefe stehen unter `/challenges`. C1 ist A01:2025 / CWE-639, C2 A05:2025 / CWE-79, C3 A06:2025 / CWE-841 (ergänzend CWE-799). Die CWE-/CVE-Links stehen direkt an den Aufgaben. C1 und C2 sind didaktische Nachbildungen, C3 ist eine eigene Umsetzung.
+Spielbare Steckbriefe stehen unter `/challenges`. C1 ist A01:2025 / CWE-639, C2 A05:2025 / CWE-79, C3 A06:2025 / CWE-837. Die CWE-/CVE-Links stehen direkt an den Aufgaben. Alle drei Challenges sind didaktische Nachbildungen.
 
 `SECURE_MODE=false` ist der Standard mit drei dokumentierten Schwachstellen. Für die sichere Variante:
 

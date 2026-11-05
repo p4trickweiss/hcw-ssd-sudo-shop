@@ -7,7 +7,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
 	const session = event.cookies.get('session');
 	if (session) {
-		console.log(session);
 		const result = await query(
 			`SELECT u.id,u.username,u.balance FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND s.expires_at>NOW()`,
 			[hash(session)]

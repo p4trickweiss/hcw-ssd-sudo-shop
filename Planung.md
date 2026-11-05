@@ -49,8 +49,8 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 - US03-AK2: Der Warenkorb zeigt je Position Produkt, Menge, Einzelpreis und Zwischensumme sowie die Gesamtsumme. Summen stimmen für gültige Eingaben.
   *Prüfung:* 2 × 12,90 € + 1 × 5,00 € ergibt 30,80 €.
 - US03-AK3: Der Warenkorb bleibt beim Wechsel zwischen Shopseiten erhalten. Ein leerer Warenkorb wird verständlich angezeigt.
-  *Umsetzung:* Der Warenkorb liegt serverseitig in der DB (`cart_items`, an die Session gebunden); ist er leer, steht dort „Dein Warenkorb ist leer“ mit einem Link zum Katalog.
-- *Bewusste Abweichung:* Die serverseitige Mengenprüfung beim Hinzufügen bzw. Ändern fehlt. Das ist Challenge **C3 (A06)**. Im normalen Ablauf erlaubt die UI nur Werte ≥ 1.
+  *Umsetzung:* Der Warenkorb liegt serverseitig in der DB (`cart_items`, dem angemeldeten Testkonto zugeordnet); ist er leer, steht dort „Dein Warenkorb ist leer“ mit einem Link zum Katalog.
+- *Bewusste Abweichung:* In beiden Betriebsmodi (sicher und unsicher) sind nur ganze Mengen von 1 bis 99 zulässig. Serverprüfung und DB-Constraint erzwingen das. C3 betrifft ausschließlich die mehrfache Einlösung desselben Gutscheins.
 
 **US04 – Bestellung simuliert abschließen** (`/checkout`)
 > Als Kundin oder Kunde möchte ich meinen Warenkorb bestellen, damit ich den vollständigen Kaufprozess testen kann.
@@ -76,7 +76,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 > Als Betreiberin oder Betreiber möchte ich den Shop zurücksetzen, damit Einkäufe wiederholt getestet werden können.
 
 - US08-AK1: Ein dokumentierter Befehl, ein Skript oder eine Oberfläche stellt Produkte und Testkonten wieder her und setzt Warenkörbe und Bestellungen auf den dokumentierten Ausgangszustand zurück.
-  *Umsetzung:* `./scripts/reset.sh` leert alle Tabellen und spielt `db/testdaten.sql` ein (Produkte, Testkonten, Bestellungen inkl. Challenge-Daten). Danach setzt `db/flags.sql` die echten Flags.
+  *Umsetzung:* `docker compose exec app ./scripts/reset.sh` führt im App-Container `scripts/reset.ts` aus. Das Skript legt das Schema an, leert die Tabellen und spielt `db/testdaten.sql` ein. Anschließend erzeugt es neue Passwort-Salts und drei neue Flags, schreibt `/app/local/flags.sql` im Volume `flags_data` und spielt diese Datei ein. Die Datenbankänderungen laufen in einer Transaktion. Alte Flags sind nach einem erfolgreichen Reset ungültig.
 - US08-AK2: Nach dem Reset funktionieren Testkonten und der normale Kaufprozess erneut.
 - US08-AK3: Das Git-Repository beschreibt Voraussetzungen, Start und Reset so, dass die Lehrperson sie ausführen kann.
   *Umsetzung:* Das README beschreibt Voraussetzungen, Start, Stop und Reset (siehe S2.7).
@@ -85,7 +85,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 > Als Kundin oder Kunde möchte ich mich mit einem Testkonto anmelden, damit ich meine Einkäufe durchführen und meine Bestellungen ansehen kann.
 
 - US09-AK1: Mindestens zwei fiktive Kundenkonten sind vorbereitet. Anmelden und Abmelden funktionieren.
-  *Umsetzung:* Die Testdaten enthalten die Konten `alice` und `bob`; die fiktiven Passwörter stehen in `db/testdaten.sql`.
+  *Umsetzung:* Die Testkonten heißen `alice` und `bob`, das fiktive Passwort ist jeweils `labubu123`. `scripts/reset.ts` erzeugt für jedes Konto einen zufälligen Salt und einen scrypt-Hash. `users.password_hash` speichert `salt:hash`; `db/testdaten.sql` enthält zunächst nur deaktivierte Platzhalter. Das interne Konto `admin` bleibt nicht einloggbar.
 - US09-AK2: Bestellungen sind dem jeweiligen Testkonto zugeordnet. Angemeldete Kundinnen und Kunden können ihre eigenen Bestellungen mit Bestellnummer, Positionen und Gesamtsumme ansehen. Bewusste Abweichungen bei Zugriffsrechten sind als Challenge dokumentiert.
   *Umsetzung:* `/orders` listet nur die eigenen Bestellungen.
   *Prüfung:* Alice sieht Bobs Bestellung in der Liste nicht.
@@ -95,7 +95,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 
 - CP-1: `/challenges` listet alle drei Challenges mit Titel, OWASP-Kategorie, Ziel, Einstieg, Vorbedingungen und Erfolgskriterium.
 - CP-2: Jede Challenge liefert bei Erfolg ein Flag im Format `SUDO{…}`. Ein Formular prüft eingereichte Flags serverseitig und zeigt „gelöst / falsch“.
-- CP-3: In der DB stehen Flags nur als SHA-256-Hash (`challenges.flag_hash`). Der Klartext steht nur dort, wo die Challenge ihn ausgibt.
+- CP-3: `challenges.flag_hash` enthält ausschließlich SHA-256-Prüfwerte. Die notwendigen Klartext-Ausgabequellen sind die fremde Bestellnotiz (C1), Bobs private Notiz (C2) und der serverseitige Reward des Flag-Produkts (C3). Der Produkt-Reward wird nicht in Katalog, Details, Suche oder Warenkorb ausgeliefert. Zusätzlich enthält die generierte Datei `/app/local/flags.sql` im Docker-Volume die für den Reset erzeugten Werte; sie ist nicht Teil des Repositorys.
 - CP-4: Gelöste Challenges werden pro Benutzer in `solves` gespeichert und in der Liste markiert. Ein Reset löscht `solves`.
 - CP-5: Hinweise sind optional aufklappbar.
 
@@ -119,12 +119,12 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 |---|---|---|---|
 | SR-01 | Nur angemeldete Benutzer sehen Bestellungen; jeder nur seine eigenen | Alice ruft Bobs Bestellung auf → 404 | **C1 (A01)** auf `/orders/[id]` |
 | SR-02 | Benutzereingaben werden bei der Ausgabe kontextgerecht kodiert | Suchbegriff `<b>x</b>` erscheint als Text, nicht fett | **C2 (A05)** auf `/search` |
-| SR-03 | Mengen und Preise werden serverseitig validiert bzw. berechnet; Client-Preise werden ignoriert | Menge `0`, `-1`, `1.5`, `abc` → 400, DB unverändert | **C3 (A06)** in `/cart` |
+| SR-03 | Mengen werden serverseitig auf ganze Zahlen von 1 bis 99 geprüft; Preise und Rabatte werden serverseitig berechnet; jeder Gutscheincode darf pro Bestellung höchstens einmal gelten | Ungültige Menge → 400, DB unverändert; im sicheren Modus zweite Einlösung desselben Codes → 400; Checkout lehnt gespeicherte Duplikate ebenfalls ab | **C3 (A06):** Im Challenge-Modus darf derselbe Code bis zu fünfmal eingelöst werden; Mengenvalidierung bleibt intakt |
 | SR-04 | Datenbankzugriffe nur mit parametrisierten Queries | Code-Review: kein String-Concat in SQL; `'` in Suche → kein Fehler | keine |
 | SR-05 | Passwörter nur als Hash gespeichert | `SELECT password_hash FROM users` enthält keinen Klartext | keine |
 | SR-06 | Session-Cookie `HttpOnly`, `SameSite=Lax`, zufällige ID (≥ 128 Bit) | Cookie in DevTools prüfen | keine |
 | SR-07 | Fehlermeldungen ohne Stacktrace, SQL oder Pfade; Details nur ins Server-Log | Ungültige ID / kaputter Request → generische Fehlerseite | keine |
-| SR-08 | Reset und Administration sind nicht über das Web erreichbar | Es gibt keine Route `/reset` o. ä.; Reset nur per SSH auf der VM | keine |
+| SR-08 | Reset und Administration sind nicht über das Web erreichbar | Es gibt keine Route `/reset` o. ä.; Reset nur per Docker-Kommando des Betreibers; später auf der VM über den administrativen Zugang | keine |
 | SR-09 | Die Schwachstellen bleiben auf die Anwendungsebene beschränkt: keine Codeausführung auf dem Server, kein Zugriff auf Dateisystem, Netzwerk oder Container-Host | Code-Review: kein `eval`/`exec`/Shell-Aufruf mit Benutzereingabe | keine |
 
 ---
@@ -258,7 +258,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 | **Shopbezug** | Bestellbestätigung / Bestelldetail `/orders/[id]` (US05, US09) |
 | **Auftrag** | „Ein anderer Kunde hat etwas Besonderes bestellt. Finde heraus, was.“ |
 | **Einstieg / Vorbedingungen** | Login als `alice`, eine eigene Bestellung ansehen |
-| **Testdaten** | `alice`, `bob`; vordefinierte Bestellung eines Kontos `admin` (nicht einloggbar) mit Flag in der Lieferadresse/Notiz |
+| **Testdaten** | `alice`, `bob`; vordefinierte Bestellung eines Kontos `admin` (nicht einloggbar) mit Flag in der Bestellnotiz |
 | **Hinweise** | 1) „Schau dir die URL deiner Bestellung genau an.“ |
 | **Erfolgskriterium** | Flag `SUDO{…}` aus der fremden Bestellung wird auf `/challenges` akzeptiert |
 | **Sicherheitswirkung** | Verlust der Vertraulichkeit fremder Bestelldaten |
@@ -285,28 +285,29 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 | **Sicherheitswirkung** | Verlust der Vertraulichkeit privater Kundendaten durch JavaScript-Ausführung in einer fremden Browsersitzung. Keine Übertragung an externe Domains oder Zugriff auf echte Daten. |
 | **Reset** | `./scripts/reset.sh` stellt Bobs fiktive Notiz wieder her und löscht Angriffszuordnungen, gesammelte Leaks und `solves`. |
 | **Sichere Korrektur** | `{@html …}` durch normales `{query}` ersetzen; restriktive CSP auch auf `/search` aktivieren. |
-| **Prüfszenario** | Nach der Korrektur zeigt `/search?q=<b>test</b>` die Zeichenfolge nur als Text; ein präparierter Link führt keinen Code mehr aus und erzeugt keinen neuen Eintrag im Collector. |
+| **Prüfszenario** | Im sicheren Modus zeigt `/search?q=<b>test</b>` die Zeichenfolge nur als Text. Nach einem Reset zuerst eine neue Angriffskennung als Alice erzeugen und diese im Prüflink verwenden; dann darf der Link in Bobs Profil keinen Code ausführen und keinen Collector-Eintrag erzeugen. Alte Kennungen sind durch den Reset ungültig und kein geeigneter Nachweis für die Korrektur. |
+
 
 ### C3 – „Gutschein-Chaos“ (fünffacher Rabatt)
 
-| Feld | Inhalt |
-|---|---|
-| **OWASP** | A06:2025 – Insecure Design |
-| **CWE** | [CWE-841: Improper Enforcement of Behavioral Workflow](https://cwe.mitre.org/data/definitions/841.html). Die Geschäftslogik erzwingt die vorgesehene Regel zur einmaligen Gutscheineinlösung nicht. Ergänzend: [CWE-799: Improper Control of Interaction Frequency](https://cwe.mitre.org/data/definitions/799.html) für die unbegrenzte Wiederholung der Einlöseaktion. |
-| **CVE** | **Keine CVE – eigene Umsetzung.** Die bisherige CVE zu negativen Warenkorb-Mengen passt nicht mehr zu diesem Szenario. |
-| **Lernziel** | Fehlende Geschäftsregeln im Design erkennen: Einzeln gültige Gutscheinanwendungen führen durch unerlaubte Kombination zu einem falschen Bestellbetrag. |
-| **Ursache** | Beim Entwurf des Checkout-Prozesses wurde nicht festgelegt bzw. durchgesetzt, dass derselbe Gutschein höchstens einmal pro Bestellung gelten darf. Die Anwendung akzeptiert jede erneute Einlösung als zusätzlichen Rabatt. |
-| **Verletzte Regel** | SR-03 (fehlende verbindliche Gutschein- und Rabattregeln) |
-| **Shopbezug** | Gutscheine, Warenkorb und simulierter Checkout (US03, US04) |
-| **Auftrag** | „Das Produkt ‚Golden Labubu (Flag)‘ kostet 1.337,00 €. Dein Guthaben beträgt 20,00 €. Nutze den Gutscheinfehler, um es trotzdem zu bestellen.“ |
-| **Einstieg / Vorbedingungen** | Login als `bob`; fiktives Guthaben 20,00 € (`users.balance`); Produkt „Golden Labubu (Flag)“ im Warenkorb |
-| **Testdaten** | Gutschein mit 20 % Rabatt, der laut Geschäftsregel pro Bestellung **nur einmal** angewendet werden dürfte. Preise und Rabatte werden als ganze Cent berechnet. |
-| **Hinweise** | 1) „Was passiert, wenn du denselben Gutscheincode erneut einlöst?“ |
-| **Erfolgskriterium** | Der verwundbare Shop akzeptiert den **gleichen 20-%-Code fünfmal**. Jede Anwendung zieht 20 % des **ursprünglichen** Produktpreises ab: 5 × 267,40 € = 1.337,00 € Rabatt. Endbetrag: 0,00 €. Bob kann das Flag-Produkt erfolgreich simuliert bestellen; Bestellung und Rabattpositionen sind in der DB nachvollziehbar. Die Bestellbestätigung zeigt das Flag `SUDO{…}`. |
-| **Sicherheitswirkung** | Integritätsverlust der Preis- und Bestelllogik: Ein hochpreisiges Produkt wird aufgrund einer unzulässigen Rabattkombination kostenlos bestellt. |
-| **Reset** | `./scripts/reset.sh` stellt Gutscheine, Warenkörbe, Bestellungen, Guthaben und `solves` zurück. |
-| **Sichere Korrektur** | Eine explizite Gutscheinregel entwerfen und serverseitig beim Einlösen **und** beim Checkout erzwingen: jeder Code höchstens einmal pro Bestellung, zulässige Kombinationen festlegen, Rabatte serverseitig und transaktional neu berechnen. Normale Mengenvalidierung bleibt intakt. |
-| **Prüfszenario** | In der sicheren Variante wird die zweite Anwendung desselben Gutscheins abgelehnt, die erste bleibt gültig. Die Bestellung darf durch die fünffache Anwendung nicht mehr auf 0,00 € sinken; normale Käufe funktionieren weiterhin. |
+| Feld | Inhalt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+|---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **OWASP** | A06:2025 – Insecure Design                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **CWE** | [CWE-837: Improper Enforcement of a Single, Unique Action](https://cwe.mitre.org/data/definitions/837.html). Die Geschäftslogik erzwingt die vorgesehene Regel zur einmaligen Gutscheineinlösung nicht, wodurch derselbe Rabatt mehrfach angewendet werden kann. Die Demo erlaubt höchstens fünf Einlösungen.                                                                                                                                                                                                                                                                                                                           |
+| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2026-112285](https://www.cve.org/CVERecord?id=CVE-2026-112285). Originalprodukt: Thelia, betroffen sind Versionen ab 2.6.2 und vor 3.1.5 sowie ab 3.2.0 und vor 3.2.4. Gutscheinnutzungen werden erst bei bezahlten Bestellungen gezählt. Mehrere Bestellungen mit späterer Zahlung oder Stornierungen erlauben dadurch zusätzliche Einlösungen.|
+| **Lernziel** | Fehlende Geschäftsregeln im Design erkennen: Einzeln gültige Gutscheinanwendungen führen durch unerlaubte Kombination zu einem falschen Bestellbetrag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Ursache** | Beim Entwurf des Checkout-Prozesses wurde nicht festgelegt bzw. durchgesetzt, dass derselbe Gutschein höchstens einmal pro Bestellung gelten darf. Im Challenge-Modus akzeptiert die Anwendung bis zu fünf Einlösungen als zusätzliche Rabatte, jeweils berechnet aus dem ursprünglichen Warenkorbwert.                                                                                                                                                                                                                                                                                                                                 |
+| **Verletzte Regel** | SR-03 (fehlende verbindliche Gutschein- und Rabattregeln)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Shopbezug** | Gutscheine, Warenkorb und simulierter Checkout (US03, US04)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Auftrag** | „Das Produkt ‚Golden Labubu (Flag)‘ kostet 1.337,00 €. Dein Guthaben beträgt 20,00 €. Nutze den Gutscheinfehler, um es trotzdem zu bestellen.“                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Einstieg / Vorbedingungen** | Login als `bob`; fiktives Guthaben 20,00 € (`users.balance`); Produkt „Golden Labubu (Flag)“ im Warenkorb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Testdaten** | Gutschein mit 20 % Rabatt, der laut Geschäftsregel pro Bestellung **nur einmal** angewendet werden dürfte. Preise und Rabatte werden als ganze Cent berechnet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Hinweise** | 1) „Was passiert, wenn du denselben Gutscheincode erneut einlöst?“                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Erfolgskriterium** | Der verwundbare Shop akzeptiert den **gleichen 20-%-Code fünfmal**. Jede Anwendung zieht 20 % des **ursprünglichen** Produktpreises ab: 5 × 267,40 € = 1.337,00 € Rabatt. Endbetrag: 0,00 €. Bob kann das Flag-Produkt erfolgreich simuliert bestellen; Bestellung und Rabattpositionen sind in der DB nachvollziehbar. Die Bestellbestätigung zeigt das Flag `SUDO{…}`.                                                                                                                                                                                                                                                                |
+| **Sicherheitswirkung** | Integritätsverlust der Preis- und Bestelllogik: Ein hochpreisiges Produkt wird aufgrund einer unzulässigen Rabattkombination kostenlos bestellt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Reset** | `./scripts/reset.sh` stellt Gutscheine, Warenkörbe, Bestellungen, Guthaben und `solves` zurück.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Sichere Korrektur** | Eine explizite Gutscheinregel entwerfen und serverseitig beim Einlösen **und** beim Checkout erzwingen: jeder Code höchstens einmal pro Bestellung, zulässige Kombinationen festlegen, Rabatte serverseitig und transaktional neu berechnen. Normale Mengenvalidierung bleibt intakt.                                                                                                                                                                                                                                                                                                                                                   |
+| **Prüfszenario** | In der sicheren Variante wird die zweite Anwendung desselben Gutscheins abgelehnt, die erste bleibt gültig. Die Bestellung darf durch die fünffache Anwendung nicht mehr auf 0,00 € sinken; normale Käufe funktionieren weiterhin.                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ---
 
@@ -318,7 +319,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 |---|---|---|
 | Patrick Weiss | Repo/Review, DB-Schema, Testdaten, Reset-Skript | C1 IDOR |
 | Philipp Huber | Auth/Sessions, Challenge-Plattform (Flag-Abgabe) | C2 XSS |
-| David Rabensteiner | Shop-Frontend (Katalog, Details, Warenkorb, Checkout) | C3 Negative Menge |
+| David Rabensteiner | Shop-Frontend (Katalog, Details, Warenkorb, Checkout) | C3 Gutschein-Chaos |
 | Michael Mezgolits | VM, Docker Compose, ufw/fail2ban/Hardening, Betriebsanleitung | Prüfszenarien aller Fixes |
 
 **Umsetzungsschritte**
@@ -335,7 +336,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 **Git-Repository und Zugriff**
 - GitHub: `p4trickweiss/hcw-ssd-sudo-shop` (**öffentlich**). Jede Person, auch die Lehrperson, kann es ohne Einladung lesen. Schreibzugriff haben nur die vier Gruppenmitglieder.
 - Folgen der Öffentlichkeit:
-  - Flags stehen **nicht** im Repo. `db/testdaten.sql` enthält keine Flags. Die echten Flags stehen in `db/flags.sql`, die nur auf der VM liegt (`.gitignore`); im Repo gibt es nur `db/flags.example.sql` mit Dummy-Werten.
+  - Flags stehen **nicht** im Repo. `db/testdaten.sql` enthält keine Flags. Die Flags entstehen bei Erstinitialisierung und jedem Reset im App-Container unter `/app/local/flags.sql`, gespeichert im Volume `flags_data`. Die Datei liegt außerhalb des Repositorys. Es gibt keine manuell zu kopierende Flag-Vorlage.
   - Musterlösungen liegen nicht im Repo, auch nicht in einem Branch (Branches sind ebenfalls öffentlich).
   - Der Quellcode inkl. der Schwachstellen ist einsehbar. Das nehmen wir bewusst in Kauf: Die Challenges bleiben lösbar und lehrreich, ein Blick in den Code ersetzt nicht das Ausnutzen im laufenden Shop, und ohne Flag gibt es keinen Erfolgsnachweis.
 - Workflow: Feature-Branches (`feature/…`), Pull Request, Merge auf `main`

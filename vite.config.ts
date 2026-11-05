@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
 		plugins: [
 			tailwindcss(),
 			sveltekit({
-				paths: { origin: env.APP_ORIGIN ?? 'http://127.0.0.1:4173' },
+				paths: { origin: env.APP_ORIGIN ?? 'http://127.0.0.1:3000' },
 				compilerOptions: {
 					runes: ({ filename }) =>
 						filename.split(/[/\\]/).includes('node_modules') ? undefined : true

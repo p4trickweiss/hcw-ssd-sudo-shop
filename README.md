@@ -10,7 +10,7 @@ Im Projektverzeichnis genügt:
 docker compose up --build -d --wait
 ```
 
-Shop: http://127.0.0.1:4173
+Shop: http://127.0.0.1
 
 Der Befehl baut und startet **Shop und PostgreSQL**. Die Anwendung wartet auf die gesunde Datenbank und legt beim allerersten Start automatisch Schema, Testkonten, Produkte und zufällige Flags an. Ein weiterer Start erhält vorhandene Bestellungen und Fortschritte. Auf dem Host sind dafür weder Node noch pnpm oder eine `.env` erforderlich.
 
@@ -32,7 +32,7 @@ docker compose up -d db
 pnpm dev
 ```
 
-`pnpm dev` lädt die lokale `.env` und startet auf http://127.0.0.1:4173.
+`pnpm dev` lädt die lokale `.env` und startet auf http://127.0.0.1:3000.
 
 ## Testkonten
 

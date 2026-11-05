@@ -4,7 +4,7 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "node --env-file=.env node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173 --strictPort",
+		"dev": "node --env-file=.env node_modules/vite/bin/vite.js --host 127.0.0.1 --port 3000 --strictPort",
 		"build": "vite build",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

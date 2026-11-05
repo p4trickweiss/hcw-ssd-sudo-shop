@@ -11,6 +11,7 @@ services:
       - '80:3000'
     volumes:
       - flags_data:/app/local
+    restart: unless-stopped
     user: node
     read_only: true
     tmpfs:
@@ -48,6 +49,7 @@ services:
       POSTGRES_DB: sudo_shop
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp

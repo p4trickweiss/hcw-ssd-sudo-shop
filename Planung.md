@@ -140,11 +140,12 @@ flowchart LR
 
     subgraph VM["Ubuntu-VM 10.12.25.25 (Proxmox) – Vertrauensgrenze 2: Host"]
         ufw{{"Firewall ufw<br/>offen: 80/tcp, 22/tcp"}}
-        reset[[scripts/reset.sh]]
-        seed[/"db/testdaten.sql<br/>db/flags.sql"/]
 
         subgraph DOCKER["Docker Compose – Vertrauensgrenze 3: Container"]
-            app["SvelteKit App – adapter-node :3000<br/>Shop + Challenge-Plattform"]
+            app["SvelteKit App – adapter-node :3000<br/>Shop + Challenge-Plattform<br/>"]
+            reset[[scripts/reset.sh → reset.ts<br/>läuft im App-Container]]
+            seed[/"db/schema.sql, db/testdaten.sql<br/>(im Image)"/]
+            flags[("Docker Volume: flags_data<br/>/app/local/flags.sql")]
 
             subgraph BE["Netz: backend (internal: true)"]
                 db[("PostgreSQL 17<br/>users, products, cart_items,<br/>orders, order_items,<br/>challenges, solves, sessions,<br/>xss_tokens")]
@@ -160,8 +161,9 @@ flowchart LR
     db -- "Daten persistent speichern" --> volume
     op -- "SSH :22 (Passwort, fail2ban)" --> ufw
     ufw -.-> reset
-    reset -. "docker compose exec db psql -f /seed/…" .-> db
-    seed -. "Bind Mount ./db → /seed (read-only)" .-> db
+    seed -. "wird gelesen" .-> reset
+    reset -. "SQL: Schema, Testdaten, Flags" .-> db
+    reset -. "schreibt neue Flags" .-> flags
 ```
 
 **Erklärung des Diagramms**
@@ -172,20 +174,21 @@ Eine Anfrage läuft so: Browser → WireGuard → VM `10.12.25.25` → Firewall 
 - **Betreiber SSH:** Wir als Gruppe loggen uns per SSH (Benutzername + Passwort) auf der VM ein, um den Shop zu starten, zu stoppen und zurückzusetzen.
 - **Firewall (ufw):** Die Standard-Firewall von Ubuntu legt fest, auf welchen Ports die VM Verbindungen von außen annimmt. Offen sind nur **Port 80** (HTTP, der Shop) und **Port 22** (SSH, Administration). Alle anderen Ports, z. B. 5432 für die Datenbank, sind zu.
 - **SvelteKit-App:** Unsere Anwendung (Shop + Challenge-Plattform) läuft im Container auf Port 3000. Docker leitet Port 80 der VM auf Port 3000 des Containers weiter (`ports: "80:3000"`). Die App läuft dadurch ohne Root-Rechte und ist trotzdem unter der normalen Web-Adresse erreichbar.
-- **PostgreSQL:** Die Datenbank läuft in einem eigenen Container in einem internen Docker-Netz. Nur die App kann sie erreichen. Die Datenbankdateien werden in einem persistenten, benannten Docker-Volume `postgres_data` gespeichert. Dadurch bleiben die Daten auch nach einem Neustart oder `docker compose down` erhalten.- **reset.sh:** Ein Skript auf der VM, das wir nach dem SSH-Login ausführen. Es spielt die Testdaten neu in die Datenbank ein. Über den Browser ist es nicht erreichbar.
-- **Testdaten und Flags:** Der Ordner `./db` der VM ist per Bind Mount nur lesend unter `/seed` im DB-Container eingebunden. `reset.sh` lässt `psql` im Container zuerst `/seed/testdaten.sql` (aus dem Repo) und dann `/seed/flags.sql` (echte Flags, nur auf der VM) ausführen.
+- **PostgreSQL:** Die Datenbank läuft in einem eigenen Container in einem internen Docker-Netz. Nur die App kann sie erreichen. Die Datenbankdateien werden in einem persistenten, benannten Docker-Volume `postgres_data` gespeichert. Dadurch bleiben die Daten auch nach einem Neustart oder `docker compose down` erhalten.
+- **reset.sh:** Ein Skript im App-Container, das wir nach dem SSH-Login mit `docker compose exec app ./scripts/reset.sh` ausführen. Es startet `scripts/reset.ts`, legt das Schema an, leert die Tabellen und spielt die Testdaten neu ein. Über den Browser ist es nicht erreichbar. Beim allerersten Start ruft `scripts/init.ts` dasselbe Skript automatisch auf, wenn die Datenbank noch leer ist.
+- **Testdaten und Flags:** `db/schema.sql` und `db/testdaten.sql` liegen im Repo und werden beim Bauen ins Image kopiert. Es gibt keinen Bind Mount. `reset.ts` erzeugt bei jedem Reset neue Passwort-Hashes und drei zufällige Flags, schreibt diese nach `/app/local/flags.sql` im Volume `flags_data` und spielt sie in die Datenbank ein. Die Flags stehen damit nie im Repo und müssen nicht manuell angelegt werden.
 
 Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Administration durch uns.
 
 **Datenflüsse**
 1. Browser → App: HTML-Seiten, Form-Actions (Login, Warenkorb, Checkout, Flag-Abgabe)
 2. App → DB: Lesen/Schreiben aller Fachdaten, Sessions
-3. Betreiber → VM (SSH) → Reset-Skript → DB: Wiederherstellen des Ausgangszustands
+3. Betreiber → VM (SSH) → `docker compose exec app` → Reset-Skript → DB und Volume `flags_data`: Wiederherstellen des Ausgangszustands mit neuen Flags
 
 **Vertrauensgrenzen**
 - **TB1 Netz → VM:** Alle Anfragen aus dem Netz gelten als nicht vertrauenswürdig. Nur Port 80 (Shop) und 22 (Admin) sind offen.
 - **TB2 Host → Container:** Die App läuft isoliert, ohne Zugriff auf Host-Dateisystem oder Docker-Socket.
-- **TB3 App → DB:** Die DB ist nur im internen Docker-Netz erreichbar. Die App nutzt einen DB-User mit eingeschränkten Rechten (keine DDL, kein Superuser).
+- **TB3 App → DB:** Die DB ist nur im internen Docker-Netz erreichbar. Die App und das Reset-Skript nutzen denselben DB-User `sudo` (Eigentümer der Datenbank, da das Schema beim Start angelegt wird). Ein getrennter DB-User mit eingeschränkten Rechten ist nicht umgesetzt und gilt als bekannte Einschränkung.
 - Die Challenge-Schwachstellen liegen **ausschließlich innerhalb der App** (Grenze TB1 → App). Keine überschreitet TB2 oder TB3.
 
 ---
@@ -205,8 +208,8 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 - Docker-Portfreigaben (`ports:`) umgehen ufw. Deshalb wird in `compose.yaml` ausschließlich `80:3000` für die App veröffentlicht.
 - Container laufen als Nicht-Root-User (`user: node`) mit `read_only: true`, `cap_drop: [ALL]` und `security_opt: [no-new-privileges:true]`. Der Docker-Socket wird nicht gemountet.
 - Ressourcenlimits (`mem_limit`, `cpus`, `pids_limit`), damit eine Überlast den Host nicht lahmlegt
-- Secrets (DB-Passwort, Session-Secret) liegen nur in `.env`, die Flags nur in `db/flags.sql`, beide ausschließlich auf der VM. Im Repo gibt es nur `.env.example` und `db/flags.example.sql`; `.env` und `db/flags.sql` stehen in `.gitignore`.
-- Volumes: PostgreSQL verwendet das persistente Docker-Volume `postgres_data` für die Datenbankdateien. Zusätzlich wird `./db` als schreibgeschützter Bind Mount unter `/seed` eingebunden, um Testdaten und Flags für den Reset bereitzustellen. Die SvelteKit-App erhält keinen Host-Mount.
+- Secrets: Das DB-Passwort steht in `compose.yaml` (`DATABASE_URL`, `POSTGRES_PASSWORD`). Die Datenbank ist nicht veröffentlicht und nur im internen Netz erreichbar. Ein Session-Secret gibt es nicht, denn Sessions sind zufällige IDs in der Datenbank. Die Flags entstehen bei der Initialisierung und bei jedem Reset im Volume `flags_data` (`/app/local/flags.sql`, Dateirechte `0600`) und stehen nie im Repo. `.env` und `db/flags.sql` stehen in `.gitignore`.
+- Volumes: Es gibt zwei benannte Docker-Volumes: `postgres_data` für die Datenbankdateien und `flags_data` für die generierten Flags der App.
 - SSH: Login mit Benutzername und starkem, individuellem Passwort; `PermitRootLogin no`; `fail2ban` sperrt IP-Adressen nach mehreren fehlgeschlagenen Login-Versuchen. Unattended Upgrades sind aktiv.
 
 **Abgrenzung gegenüber anderen Gruppen und Hochschulsystemen**
@@ -233,7 +236,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 **Entscheidung:** SvelteKit, weil der Umfang mit vier Personen in drei Wochen realistisch bleibt und eine kleinere Angriffsfläche (kein CORS) die Abgrenzung erleichtert.
 
 **E2: PostgreSQL statt SQLite**
-- Pro Postgres: realistische Mehrbenutzer-DB, Rechte pro DB-User (TB3), `CHECK`-Constraints für die sichere Korrektur von C3, eigener Container und damit sauberer Reset durch Einspielen der Testdaten
+- Pro Postgres: realistische Mehrbenutzer-DB, `CHECK`-Constraints für die sichere Korrektur von C3, eigener Container und damit sauberer Reset durch Einspielen der Testdaten
 - Contra Postgres: zusätzlicher Container und mehr RAM
 - SQLite wäre einfacher (eine Datei, Reset durch Kopieren), hat aber kein Rechtemodell und mischt App- und Datenschicht im selben Container.
 
@@ -345,16 +348,15 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 **Laufzeitvoraussetzungen (VM)**
 - Ubuntu Server (Proxmox-VM), Docker Engine ≥ 27 mit Compose-Plugin, git, ufw, fail2ban
 - Erreichbar über WireGuard (HCW-Konfiguration), Shop unter **http://10.12.25.25**
-- Lokal zur Entwicklung: Node.js 22, pnpm, Docker
+- Lokal: Docker oder Podman mit Compose. Node.js und pnpm sind auf dem Host nicht nötig, gebaut wird im Container (Image `node:24`). Die Datenbank ist nicht auf dem Host erreichbar, daher läuft die Entwicklung im Container.
 
 **Start / Stop / Reset** (auf der VM, per SSH)
 ```bash
 git clone git@github.com:p4trickweiss/hcw-ssd-sudo-shop.git && cd hcw-ssd-sudo-shop
-cp .env.example .env            # Secrets lokal setzen, nicht committen
-cp db/flags.example.sql db/flags.sql   # echte Flags eintragen, nicht committen
-docker compose up -d --build    # Start
-docker compose ps               # Status / Healthcheck
-docker compose down             # Stop (Daten bleiben erhalten)
-./scripts/reset.sh              # Reset: Tabellen leeren + db/testdaten.sql und db/flags.sql einspielen
+# In compose.yaml bei build.args: APP_ORIGIN auf http://10.12.25.25 setzen
+docker compose up -d --build --wait    # Start (baut neu, wartet auf Healthcheck)
+docker compose ps                      # Status / Healthcheck
+docker compose down                    # Stop (Daten bleiben in den Volumes erhalten)
+docker compose exec app ./scripts/reset.sh   # Reset: Testdaten neu, neue Flags
 ```
 

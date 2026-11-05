@@ -11,6 +11,20 @@ services:
       - '80:3000'
     volumes:
       - flags_data:/app/local
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 200
+    networks:
+      - default
+      - backend
     depends_on:
       db:
         condition: service_healthy
@@ -32,15 +46,36 @@ services:
       POSTGRES_USER: sudo
       POSTGRES_PASSWORD: sudo_local_only
       POSTGRES_DB: sudo_shop
-    ports:
-      - '127.0.0.1:5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 200
+    networks:
+      - backend
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U sudo -d sudo_shop']
       interval: 3s
       timeout: 3s
       retries: 15
+networks:
+  default: {}
+  backend:
+    internal: true
 volumes:
   postgres_data:
   flags_data:

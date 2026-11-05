@@ -22,18 +22,6 @@ docker compose exec app ./scripts/reset.sh  # Alle Testdaten zurücksetzen
 
 PostgreSQL-Daten und lokale Flags bleiben in den benannten Volumes `postgres_data` und `flags_data` erhalten. Ein Reset löscht Sitzungen, Bestellungen und Challenge-Fortschritt und erzeugt neue Flags. Danach neu anmelden. Die App läuft im Container als Benutzer `node`.
 
-## Svelte lokal entwickeln, PostgreSQL in Docker
-
-Für lokale Codeänderungen kann Svelte mit automatischem Neuladen gestartet werden. Die bestehende Docker-Datenbank wird weiterverwendet:
-
-```sh
-docker compose stop app
-docker compose up -d db
-pnpm dev
-```
-
-`pnpm dev` lädt die lokale `.env` und startet auf http://127.0.0.1:3000.
-
 ## Testkonten
 
 | Benutzer | Passwort  | Fiktives Guthaben nach Reset |

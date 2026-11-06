@@ -49,8 +49,8 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 - US03-AK2: Der Warenkorb zeigt je Position Produkt, Menge, Einzelpreis und Zwischensumme sowie die Gesamtsumme. Summen stimmen für gültige Eingaben.
   *Prüfung:* 2 × 12,90 € + 1 × 5,00 € ergibt 30,80 €.
 - US03-AK3: Der Warenkorb bleibt beim Wechsel zwischen Shopseiten erhalten. Ein leerer Warenkorb wird verständlich angezeigt.
-  *Umsetzung:* Der Warenkorb liegt serverseitig in der DB (`cart_items`, an die Session gebunden); ist er leer, steht dort „Dein Warenkorb ist leer“ mit einem Link zum Katalog.
-- *Bewusste Abweichung:* Die serverseitige Mengenprüfung beim Hinzufügen bzw. Ändern fehlt. Das ist Challenge **C3 (A06)**. Im normalen Ablauf erlaubt die UI nur Werte ≥ 1.
+  *Umsetzung:* Der Warenkorb liegt serverseitig in der DB (`cart_items`, dem angemeldeten Testkonto zugeordnet); ist er leer, steht dort „Dein Warenkorb ist leer“ mit einem Link zum Katalog.
+- *Bewusste Abweichung:* In beiden Betriebsmodi (sicher und unsicher) sind nur ganze Mengen von 1 bis 99 zulässig. Serverprüfung und DB-Constraint erzwingen das. C3 betrifft ausschließlich die mehrfache Einlösung desselben Gutscheins.
 
 **US04 – Bestellung simuliert abschließen** (`/checkout`)
 > Als Kundin oder Kunde möchte ich meinen Warenkorb bestellen, damit ich den vollständigen Kaufprozess testen kann.
@@ -76,7 +76,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 > Als Betreiberin oder Betreiber möchte ich den Shop zurücksetzen, damit Einkäufe wiederholt getestet werden können.
 
 - US08-AK1: Ein dokumentierter Befehl, ein Skript oder eine Oberfläche stellt Produkte und Testkonten wieder her und setzt Warenkörbe und Bestellungen auf den dokumentierten Ausgangszustand zurück.
-  *Umsetzung:* `./scripts/reset.sh` leert alle Tabellen und spielt `db/testdaten.sql` ein (Produkte, Testkonten, Bestellungen inkl. Challenge-Daten). Danach setzt `db/flags.sql` die echten Flags.
+  *Umsetzung:* `docker compose exec app ./scripts/reset.sh` führt im App-Container `scripts/reset.ts` aus. Das Skript legt das Schema an, leert die Tabellen und spielt `db/testdaten.sql` ein. Anschließend erzeugt es neue Passwort-Salts und drei neue Flags, schreibt `/app/local/flags.sql` im Volume `flags_data` und spielt diese Datei ein. Die Datenbankänderungen laufen in einer Transaktion. Alte Flags sind nach einem erfolgreichen Reset ungültig.
 - US08-AK2: Nach dem Reset funktionieren Testkonten und der normale Kaufprozess erneut.
 - US08-AK3: Das Git-Repository beschreibt Voraussetzungen, Start und Reset so, dass die Lehrperson sie ausführen kann.
   *Umsetzung:* Das README beschreibt Voraussetzungen, Start, Stop und Reset (siehe S2.7).
@@ -85,7 +85,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 > Als Kundin oder Kunde möchte ich mich mit einem Testkonto anmelden, damit ich meine Einkäufe durchführen und meine Bestellungen ansehen kann.
 
 - US09-AK1: Mindestens zwei fiktive Kundenkonten sind vorbereitet. Anmelden und Abmelden funktionieren.
-  *Umsetzung:* Die Testdaten enthalten die Konten `alice` und `bob`; die fiktiven Passwörter stehen in `db/testdaten.sql`.
+  *Umsetzung:* Die Testkonten heißen `alice` und `bob`, das fiktive Passwort ist jeweils `labubu123`. `scripts/reset.ts` erzeugt für jedes Konto einen zufälligen Salt und einen scrypt-Hash. `users.password_hash` speichert `salt:hash`; `db/testdaten.sql` enthält zunächst nur deaktivierte Platzhalter. Das interne Konto `admin` bleibt nicht einloggbar.
 - US09-AK2: Bestellungen sind dem jeweiligen Testkonto zugeordnet. Angemeldete Kundinnen und Kunden können ihre eigenen Bestellungen mit Bestellnummer, Positionen und Gesamtsumme ansehen. Bewusste Abweichungen bei Zugriffsrechten sind als Challenge dokumentiert.
   *Umsetzung:* `/orders` listet nur die eigenen Bestellungen.
   *Prüfung:* Alice sieht Bobs Bestellung in der Liste nicht.
@@ -95,7 +95,7 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 
 - CP-1: `/challenges` listet alle drei Challenges mit Titel, OWASP-Kategorie, Ziel, Einstieg, Vorbedingungen und Erfolgskriterium.
 - CP-2: Jede Challenge liefert bei Erfolg ein Flag im Format `SUDO{…}`. Ein Formular prüft eingereichte Flags serverseitig und zeigt „gelöst / falsch“.
-- CP-3: In der DB stehen Flags nur als SHA-256-Hash (`challenges.flag_hash`). Der Klartext steht nur dort, wo die Challenge ihn ausgibt.
+- CP-3: `challenges.flag_hash` enthält ausschließlich SHA-256-Prüfwerte. Die notwendigen Klartext-Ausgabequellen sind die fremde Bestellnotiz (C1), Bobs private Notiz (C2) und der serverseitige Reward des Flag-Produkts (C3). Der Produkt-Reward wird nicht in Katalog, Details, Suche oder Warenkorb ausgeliefert. Zusätzlich enthält die generierte Datei `/app/local/flags.sql` im Docker-Volume die für den Reset erzeugten Werte; sie ist nicht Teil des Repositorys.
 - CP-4: Gelöste Challenges werden pro Benutzer in `solves` gespeichert und in der Liste markiert. Ein Reset löscht `solves`.
 - CP-5: Hinweise sind optional aufklappbar.
 
@@ -119,12 +119,12 @@ Alle Preise werden in der DB als ganze Cent (`integer`) gespeichert, um Rundungs
 |---|---|---|---|
 | SR-01 | Nur angemeldete Benutzer sehen Bestellungen; jeder nur seine eigenen | Alice ruft Bobs Bestellung auf → 404 | **C1 (A01)** auf `/orders/[id]` |
 | SR-02 | Benutzereingaben werden bei der Ausgabe kontextgerecht kodiert | Suchbegriff `<b>x</b>` erscheint als Text, nicht fett | **C2 (A05)** auf `/search` |
-| SR-03 | Mengen und Preise werden serverseitig validiert bzw. berechnet; Client-Preise werden ignoriert | Menge `0`, `-1`, `1.5`, `abc` → 400, DB unverändert | **C3 (A06)** in `/cart` |
+| SR-03 | Mengen werden serverseitig auf ganze Zahlen von 1 bis 99 geprüft; Preise und Rabatte werden serverseitig berechnet; jeder Gutscheincode darf pro Bestellung höchstens einmal gelten | Ungültige Menge → 400, DB unverändert; im sicheren Modus zweite Einlösung desselben Codes → 400; Checkout lehnt gespeicherte Duplikate ebenfalls ab | **C3 (A06):** Im Challenge-Modus darf derselbe Code bis zu fünfmal eingelöst werden; Mengenvalidierung bleibt intakt |
 | SR-04 | Datenbankzugriffe nur mit parametrisierten Queries | Code-Review: kein String-Concat in SQL; `'` in Suche → kein Fehler | keine |
 | SR-05 | Passwörter nur als Hash gespeichert | `SELECT password_hash FROM users` enthält keinen Klartext | keine |
 | SR-06 | Session-Cookie `HttpOnly`, `SameSite=Lax`, zufällige ID (≥ 128 Bit) | Cookie in DevTools prüfen | keine |
 | SR-07 | Fehlermeldungen ohne Stacktrace, SQL oder Pfade; Details nur ins Server-Log | Ungültige ID / kaputter Request → generische Fehlerseite | keine |
-| SR-08 | Reset und Administration sind nicht über das Web erreichbar | Es gibt keine Route `/reset` o. ä.; Reset nur per SSH auf der VM | keine |
+| SR-08 | Reset und Administration sind nicht über das Web erreichbar | Es gibt keine Route `/reset` o. ä.; Reset nur per Docker-Kommando des Betreibers; später auf der VM über den administrativen Zugang | keine |
 | SR-09 | Die Schwachstellen bleiben auf die Anwendungsebene beschränkt: keine Codeausführung auf dem Server, kein Zugriff auf Dateisystem, Netzwerk oder Container-Host | Code-Review: kein `eval`/`exec`/Shell-Aufruf mit Benutzereingabe | keine |
 
 ---
@@ -139,24 +139,31 @@ flowchart LR
     end
 
     subgraph VM["Ubuntu-VM 10.12.25.25 (Proxmox) – Vertrauensgrenze 2: Host"]
-        ufw{{Firewall ufw<br/>offen: 80/tcp, 22/tcp}}
-        reset[[scripts/reset.sh]]
-        seed[/"db/testdaten.sql<br/>db/flags.sql"/]
+        ufw{{"Firewall ufw<br/>offen: 80/tcp, 22/tcp"}}
+
         subgraph DOCKER["Docker Compose – Vertrauensgrenze 3: Container"]
-            app[SvelteKit App – adapter-node :3000<br/>Shop + Challenge-Plattform]
+            app["SvelteKit App – adapter-node :3000<br/>Shop + Challenge-Plattform<br/>"]
+            reset[[scripts/reset.sh → reset.ts<br/>läuft im App-Container]]
+            seed[/"db/schema.sql, db/testdaten.sql<br/>(im Image)"/]
+            flags[("Docker Volume: flags_data<br/>/app/local/flags.sql")]
+
             subgraph BE["Netz: backend (internal: true)"]
-                db[(PostgreSQL 17<br/>users, products, cart_items,<br/>orders, order_items,<br/>challenges, solves, sessions,<br/>xss_tokens)]
+                db[("PostgreSQL 17<br/>users, products, cart_items,<br/>orders, order_items,<br/>challenges, solves, sessions,<br/>xss_tokens")]
             end
+
+            volume[("Docker Volume: postgres_data<br/>Persistente Datenbankdateien")]
         end
     end
 
     user -- "HTTP :80" --> ufw
     ufw -- "Port 80 → 3000" --> app
     app -- "SQL :5432 (parametrisiert)" --> db
+    db -- "Daten persistent speichern" --> volume
     op -- "SSH :22 (Passwort, fail2ban)" --> ufw
     ufw -.-> reset
-    reset -. "docker compose exec db psql -f /seed/…" .-> db
-    seed -. "Bind Mount ./db → /seed" .-> db
+    seed -. "wird gelesen" .-> reset
+    reset -. "SQL: Schema, Testdaten, Flags" .-> db
+    reset -. "schreibt neue Flags" .-> flags
 ```
 
 **Erklärung des Diagramms**
@@ -167,21 +174,21 @@ Eine Anfrage läuft so: Browser → WireGuard → VM `10.12.25.25` → Firewall 
 - **Betreiber SSH:** Wir als Gruppe loggen uns per SSH (Benutzername + Passwort) auf der VM ein, um den Shop zu starten, zu stoppen und zurückzusetzen.
 - **Firewall (ufw):** Die Standard-Firewall von Ubuntu legt fest, auf welchen Ports die VM Verbindungen von außen annimmt. Offen sind nur **Port 80** (HTTP, der Shop) und **Port 22** (SSH, Administration). Alle anderen Ports, z. B. 5432 für die Datenbank, sind zu.
 - **SvelteKit-App:** Unsere Anwendung (Shop + Challenge-Plattform) läuft im Container auf Port 3000. Docker leitet Port 80 der VM auf Port 3000 des Containers weiter (`ports: "80:3000"`). Die App läuft dadurch ohne Root-Rechte und ist trotzdem unter der normalen Web-Adresse erreichbar.
-- **PostgreSQL:** Die Datenbank läuft in einem eigenen Container in einem internen Docker-Netz. Nur die App kann sie erreichen, von außen ist sie weder über die VM noch über das Netz erreichbar.
-- **reset.sh:** Ein Skript auf der VM, das wir nach dem SSH-Login ausführen. Es spielt die Testdaten neu in die Datenbank ein. Über den Browser ist es nicht erreichbar.
-- **Testdaten und Flags:** Der Ordner `./db` der VM ist per Bind Mount nur lesend unter `/seed` im DB-Container eingebunden. `reset.sh` lässt `psql` im Container zuerst `/seed/testdaten.sql` (aus dem Repo) und dann `/seed/flags.sql` (echte Flags, nur auf der VM) ausführen.
+- **PostgreSQL:** Die Datenbank läuft in einem eigenen Container in einem internen Docker-Netz. Nur die App kann sie erreichen. Die Datenbankdateien werden in einem persistenten, benannten Docker-Volume `postgres_data` gespeichert. Dadurch bleiben die Daten auch nach einem Neustart oder `docker compose down` erhalten.
+- **reset.sh:** Ein Skript im App-Container, das wir nach dem SSH-Login mit `docker compose exec app ./scripts/reset.sh` ausführen. Es startet `scripts/reset.ts`, legt das Schema an, leert die Tabellen und spielt die Testdaten neu ein. Über den Browser ist es nicht erreichbar. Beim allerersten Start ruft `scripts/init.ts` dasselbe Skript automatisch auf, wenn die Datenbank noch leer ist.
+- **Testdaten und Flags:** `db/schema.sql` und `db/testdaten.sql` liegen im Repo und werden beim Bauen ins Image kopiert. Es gibt keinen Bind Mount. `reset.ts` erzeugt bei jedem Reset neue Passwort-Hashes und drei zufällige Flags, schreibt diese nach `/app/local/flags.sql` im Volume `flags_data` und spielt sie in die Datenbank ein. Die Flags stehen damit nie im Repo und müssen nicht manuell angelegt werden.
 
 Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Administration durch uns.
 
 **Datenflüsse**
 1. Browser → App: HTML-Seiten, Form-Actions (Login, Warenkorb, Checkout, Flag-Abgabe)
 2. App → DB: Lesen/Schreiben aller Fachdaten, Sessions
-3. Betreiber → VM (SSH) → Reset-Skript → DB: Wiederherstellen des Ausgangszustands
+3. Betreiber → VM (SSH) → `docker compose exec app` → Reset-Skript → DB und Volume `flags_data`: Wiederherstellen des Ausgangszustands mit neuen Flags
 
 **Vertrauensgrenzen**
 - **TB1 Netz → VM:** Alle Anfragen aus dem Netz gelten als nicht vertrauenswürdig. Nur Port 80 (Shop) und 22 (Admin) sind offen.
 - **TB2 Host → Container:** Die App läuft isoliert, ohne Zugriff auf Host-Dateisystem oder Docker-Socket.
-- **TB3 App → DB:** Die DB ist nur im internen Docker-Netz erreichbar. Die App nutzt einen DB-User mit eingeschränkten Rechten (keine DDL, kein Superuser).
+- **TB3 App → DB:** Die DB ist nur im internen Docker-Netz erreichbar. Die App und das Reset-Skript nutzen denselben DB-User `sudo` (Eigentümer der Datenbank, da das Schema beim Start angelegt wird). Ein getrennter DB-User mit eingeschränkten Rechten ist nicht umgesetzt und gilt als bekannte Einschränkung.
 - Die Challenge-Schwachstellen liegen **ausschließlich innerhalb der App** (Grenze TB1 → App). Keine überschreitet TB2 oder TB3.
 
 ---
@@ -201,8 +208,8 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 - Docker-Portfreigaben (`ports:`) umgehen ufw. Deshalb wird in `compose.yaml` ausschließlich `80:3000` für die App veröffentlicht.
 - Container laufen als Nicht-Root-User (`user: node`) mit `read_only: true`, `cap_drop: [ALL]` und `security_opt: [no-new-privileges:true]`. Der Docker-Socket wird nicht gemountet.
 - Ressourcenlimits (`mem_limit`, `cpus`, `pids_limit`), damit eine Überlast den Host nicht lahmlegt
-- Secrets (DB-Passwort, Session-Secret) liegen nur in `.env`, die Flags nur in `db/flags.sql`, beide ausschließlich auf der VM. Im Repo gibt es nur `.env.example` und `db/flags.example.sql`; `.env` und `db/flags.sql` stehen in `.gitignore`.
-- Einziger Bind Mount: `./db` → `/seed` im DB-Container, nur lesend. Die App hat keinen Mount.
+- Secrets: Das DB-Passwort steht in `compose.yaml` (`DATABASE_URL`, `POSTGRES_PASSWORD`). Die Datenbank ist nicht veröffentlicht und nur im internen Netz erreichbar. Ein Session-Secret gibt es nicht, denn Sessions sind zufällige IDs in der Datenbank. Die Flags entstehen bei der Initialisierung und bei jedem Reset im Volume `flags_data` (`/app/local/flags.sql`, Dateirechte `0600`) und stehen nie im Repo. `.env` und `db/flags.sql` stehen in `.gitignore`.
+- Volumes: Es gibt zwei benannte Docker-Volumes: `postgres_data` für die Datenbankdateien und `flags_data` für die generierten Flags der App.
 - SSH: Login mit Benutzername und starkem, individuellem Passwort; `PermitRootLogin no`; `fail2ban` sperrt IP-Adressen nach mehreren fehlgeschlagenen Login-Versuchen. Unattended Upgrades sind aktiv.
 
 **Abgrenzung gegenüber anderen Gruppen und Hochschulsystemen**
@@ -229,7 +236,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 **Entscheidung:** SvelteKit, weil der Umfang mit vier Personen in drei Wochen realistisch bleibt und eine kleinere Angriffsfläche (kein CORS) die Abgrenzung erleichtert.
 
 **E2: PostgreSQL statt SQLite**
-- Pro Postgres: realistische Mehrbenutzer-DB, Rechte pro DB-User (TB3), `CHECK`-Constraints für die sichere Korrektur von C3, eigener Container und damit sauberer Reset durch Einspielen der Testdaten
+- Pro Postgres: realistische Mehrbenutzer-DB, `CHECK`-Constraints für die sichere Korrektur von C3, eigener Container und damit sauberer Reset durch Einspielen der Testdaten
 - Contra Postgres: zusätzlicher Container und mehr RAM
 - SQLite wäre einfacher (eine Datei, Reset durch Kopieren), hat aber kein Rechtemodell und mischt App- und Datenschicht im selben Container.
 
@@ -254,7 +261,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 | **Shopbezug** | Bestellbestätigung / Bestelldetail `/orders/[id]` (US05, US09) |
 | **Auftrag** | „Ein anderer Kunde hat etwas Besonderes bestellt. Finde heraus, was.“ |
 | **Einstieg / Vorbedingungen** | Login als `alice`, eine eigene Bestellung ansehen |
-| **Testdaten** | `alice`, `bob`; vordefinierte Bestellung eines Kontos `admin` (nicht einloggbar) mit Flag in der Lieferadresse/Notiz |
+| **Testdaten** | `alice`, `bob`; vordefinierte Bestellung eines Kontos `admin` (nicht einloggbar) mit Flag in der Bestellnotiz |
 | **Hinweise** | 1) „Schau dir die URL deiner Bestellung genau an.“ |
 | **Erfolgskriterium** | Flag `SUDO{…}` aus der fremden Bestellung wird auf `/challenges` akzeptiert |
 | **Sicherheitswirkung** | Verlust der Vertraulichkeit fremder Bestelldaten |
@@ -262,47 +269,48 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 | **Sichere Korrektur** | Query auf `WHERE id = $1 AND user_id = $2` (Session-User) ändern; bei keinem Treffer 404 statt 403, damit die Existenz nicht verraten wird |
 | **Prüfszenario** | Als `alice` die ID einer Bestellung von `bob` aufrufen → **erwartet: 404**. Eigene Bestellung → 200. Ohne Login → Redirect `/login`. |
 
-### C2 – „Suchmaschinen-Optimierung“ (reflektiertes XSS)
+### C2 – „Suchmaschinen-Optimierung“ (reflektiertes XSS / Datenleck)
 
 | Feld | Inhalt |
 |---|---|
 | **OWASP** | A05:2025 – Injection (vorgegebene Kategorie) |
-| **CWE** | [CWE-79: Improper Neutralization of Input During Web Page Generation (Cross-site Scripting)](https://cwe.mitre.org/data/definitions/79.html). Der Suchbegriff aus `?q=` wird unkodiert als HTML ausgegeben (reflektiert, Typ 1). |
-| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2020-5272](https://www.cve.org/CVERecord?id=CVE-2020-5272). Originalprodukt: PrestaShop. Reflektiertes XSS auf der Suchseite über die Parameter `alias` und `search`. |
-| **Lernziel** | Verstehen, warum Ausgaben kontextgerecht kodiert werden müssen, und wie Frameworks (Svelte-Escaping) und CSP davor schützen |
-| **Ursache** | Ausgabe von „Ergebnisse für: …“ über `{@html}` statt über normales Text-Binding; gelockerte CSP auf `/search` |
+| **CWE** | [CWE-79: Improper Neutralization of Input During Web Page Generation (Cross-site Scripting)](https://cwe.mitre.org/data/definitions/79.html). Der Suchbegriff aus `?q=` wird unkodiert als HTML ausgegeben (reflektiertes XSS). |
+| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2020-5272](https://www.cve.org/CVERecord?id=CVE-2020-5272). Originalprodukt: PrestaShop; reflektiertes XSS auf der Suchseite über Suchparameter. |
+| **Lernziel** | Zeigen, dass XSS mehr als ein `alert()` auslösen kann: Fremder JavaScript-Code läuft im Kontext eines eingeloggten Shopkunden und kann fiktive private Shopdaten offenlegen. |
+| **Ursache** | Die Suchseite gibt den Parameter `q` über `{@html}` statt als escaped Text aus; die CSP ist ausschließlich auf `/search` für die Challenge gelockert. |
 | **Verletzte Regel** | SR-02 |
-| **Shopbezug** | Produktsuche `/search?q=` (optionale Erweiterung „Suche“) |
-| **Auftrag** | „Bring die Suchseite dazu, eingeschleusten JavaScript-Code auszuführen, der `alert()` aufruft.“ |
-| **Einstieg / Vorbedingungen** | Suchfeld im Header; kein Login nötig |
-| **Testdaten** | vordefinierte Produkte |
-| **Hinweise** | 1) „Wie wird dein Suchbegriff auf der Ergebnisseite dargestellt?“ |
-| **Erfolgskriterium** | `alert()`-Nachweis mit Serverprüfung: 1) Beim Ausliefern von `/search` erzeugt der Server ein einmaliges Token (gültig 5 Minuten), speichert es mit dem Suchbegriff in `xss_tokens` und bettet es als `data-`Attribut in die Seite ein. 2) Ein Prüfskript auf der Suchseite überwacht `alert()`. Wird die Funktion aufgerufen, sendet es Token und Suchbegriff an `POST /api/challenges/c2/verify`. 3) Der Server gibt das Flag `SUDO{…}` nur zurück, wenn das Token gültig und unverbraucht ist, zum Suchbegriff gehört und der Suchbegriff laut HTML-Parser tatsächlich Markup enthält. 4) Die Seite zeigt das Flag in einem Banner; es wird auf `/challenges` akzeptiert und in `solves` gespeichert. Das Flag steht nie im HTML-Quelltext oder in einem Cookie; ein direkter `alert()`-Aufruf über die Browser-Konsole scheitert an der Markup-Prüfung. |
-| **Sicherheitswirkung** | Ausführung von fremdem Code im Browser anderer Nutzer, z. B. Aktionen im Namen des Opfers. Die Wirkung bleibt auf den Browser beschränkt, der Server ist nicht betroffen. |
-| **Reset** | Die Schwachstelle selbst ist zustandslos (reflektiert). `reset.sh` leert `solves` und `xss_tokens`; abgelaufene bzw. verbrauchte Tokens werden zusätzlich beim Prüfen gelöscht. |
-| **Sichere Korrektur** | `{@html …}` durch `{query}` ersetzen (automatisches Escaping); restriktive CSP `script-src 'self'` auch auf `/search` |
-| **Prüfszenario** | `/search?q=<b>test</b>` → **erwartet:** wörtlich `<b>test</b>` als Text sichtbar, kein fett formatierter Text. HTML-Quelltext enthält `&lt;b&gt;`. Response-Header enthält die CSP. |
+| **Shopbezug** | Produktsuche `/search?q=…` und private, fiktive Bestellnotiz eines Kunden |
+| **Auftrag** | „Präpariere einen Suchlink, über den du die private Bestellnotiz eines anderen Testkunden erhältst.“ |
+| **Einstieg / Vorbedingungen** | Alice ist Angreiferin und erstellt einen manipulierten Suchlink. Bob ist als fiktiver Kunde in einem separaten Browserprofil eingeloggt und öffnet den Link bei der manuellen Vorführung. Kein automatischer Opfer-Bot nötig. |
+| **Testdaten** | `alice`, `bob`; Bob besitzt eine nur für seine Sitzung zugängliche fiktive VIP-Bestellnotiz (nicht identisch mit dem Flag aus C1). |
+| **Hinweise** | 1) „Was passiert mit deinem Suchbegriff im HTML?“ 2) „Welche Shopdaten darf Bob sehen, Alice aber nicht?“ |
+| **Erfolgskriterium** | Alice verknüpft einen Angriff mit ihrer Challenge-Sitzung und platziert den entsprechenden Code im Suchlink. Der in Bobs Browser ausgeführte Code ruft mit **Bobs Sitzung** die private Notiz von einer nur für Bob autorisierten Shoproute ab und sendet sie per `POST /api/challenges/c2/collect` an den **eigenen Shop**. Der Collector nimmt nur die vorgesehenen fiktiven Challenge-Daten an, prüft die Zuordnung zu Alices Angriff sowie Bobs Sitzung und speichert den Leak. Alice sieht die abgefangene Notiz in ihrer Challenge-Ansicht und erhält das Flag `SUDO{…}`. Ein bloßer `alert()` genügt nicht. |
+| **Sicherheitswirkung** | Verlust der Vertraulichkeit privater Kundendaten durch JavaScript-Ausführung in einer fremden Browsersitzung. Keine Übertragung an externe Domains oder Zugriff auf echte Daten. |
+| **Reset** | `./scripts/reset.sh` stellt Bobs fiktive Notiz wieder her und löscht Angriffszuordnungen, gesammelte Leaks und `solves`. |
+| **Sichere Korrektur** | `{@html …}` durch normales `{query}` ersetzen; restriktive CSP auch auf `/search` aktivieren. |
+| **Prüfszenario** | Im sicheren Modus zeigt `/search?q=<b>test</b>` die Zeichenfolge nur als Text. Nach einem Reset zuerst eine neue Angriffskennung als Alice erzeugen und diese im Prüflink verwenden; dann darf der Link in Bobs Profil keinen Code ausführen und keinen Collector-Eintrag erzeugen. Alte Kennungen sind durch den Reset ungültig und kein geeigneter Nachweis für die Korrektur. |
 
-### C3 – „Rabatt auf Minus“ (negative Menge)
 
-| Feld | Inhalt |
-|---|---|
-| **OWASP** | A06:2025 – Insecure Design |
-| **CWE** | [CWE-1284: Improper Validation of Specified Quantity in Input](https://cwe.mitre.org/data/definitions/1284.html). Die Menge wird nicht auf den erlaubten Bereich (ganze Zahl ≥ 1) geprüft. Verwandt: CWE-840 Business Logic Errors. |
-| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2026-44826](https://www.cve.org/CVERecord?id=CVE-2026-44826). Originalprodukt: Vvveb CMS, betroffene Versionen < 1.0.8.2. Der Endpunkt zum Hinzufügen in den Warenkorb prüft das Vorzeichen der Menge nicht, wodurch Zwischen- und Gesamtsummen negativ werden und der Checkout die Bestellung akzeptiert. |
-| **Lernziel** | Geschäftsregeln serverseitig durchsetzen; clientseitige Validierung (`min="1"`) ist keine Sicherheitsmaßnahme |
-| **Ursache** | Die Form-Action übernimmt `quantity` ungeprüft (`parseInt`), die DB hat kein `CHECK`, und der Checkout summiert blind |
-| **Verletzte Regel** | SR-03 |
-| **Shopbezug** | Warenkorb und Checkout (US03, US04) |
-| **Auftrag** | „Das Produkt ‚Golden Labubu (Flag)‘ kostet 1.337,00 €. Dein Guthaben beträgt 20,00 €. Kauf es trotzdem.“ |
-| **Einstieg / Vorbedingungen** | Login als `bob`; fiktives Guthaben von 20 € pro Konto (Spalte `users.balance`) |
-| **Testdaten** | `bob`, Produkt „Golden Labubu (Flag)“ |
-| **Hinweise** | 1) „Validiert der Server wirklich alles, was das Formular erlaubt?“ |
-| **Erfolgskriterium** | Eine erfolgreiche Bestellung, die das Flag-Produkt enthält, zeigt auf der Bestätigungsseite das Flag. Die Bestellung ist in `orders` nachweisbar. |
-| **Sicherheitswirkung** | Integritätsverlust: Waren werden unter Wert bzw. kostenlos „gekauft“. |
-| **Reset** | `reset.sh` setzt Warenkörbe, Bestellungen, Guthaben und `solves` zurück |
-| **Sichere Korrektur** | Serverseitiges Schema `quantity: z.coerce.number().int().min(1).max(99)`; DB-Constraint `CHECK (quantity > 0)` auf `cart_items` und `order_items`; Checkout lehnt Bestellungen mit Summe ≤ 0 oder einzelnen Positionen ≤ 0 ab |
-| **Prüfszenario** | Mengenänderung mit `0`, `-1`, `1.5`, `abc` → **erwartet:** 400 „Ungültige Menge“, Warenkorb unverändert. Direkter SQL-Insert mit `-1` → Constraint-Fehler. Gültige Menge `2` → 200. |
+### C3 – „Gutschein-Chaos“ (fünffacher Rabatt)
+
+| Feld | Inhalt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+|---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **OWASP** | A06:2025 – Insecure Design                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **CWE** | [CWE-837: Improper Enforcement of a Single, Unique Action](https://cwe.mitre.org/data/definitions/837.html). Die Geschäftslogik erzwingt die vorgesehene Regel zur einmaligen Gutscheineinlösung nicht, wodurch derselbe Rabatt mehrfach angewendet werden kann. Die Demo erlaubt höchstens fünf Einlösungen.                                                                                                                                                                                                                                                                                                                           |
+| **CVE** | Didaktische Nachbildung mit Bezug auf [CVE-2026-112285](https://www.cve.org/CVERecord?id=CVE-2026-112285). Originalprodukt: Thelia, betroffen sind Versionen ab 2.6.2 und vor 3.1.5 sowie ab 3.2.0 und vor 3.2.4. Gutscheinnutzungen werden erst bei bezahlten Bestellungen gezählt. Mehrere Bestellungen mit späterer Zahlung oder Stornierungen erlauben dadurch zusätzliche Einlösungen.|
+| **Lernziel** | Fehlende Geschäftsregeln im Design erkennen: Einzeln gültige Gutscheinanwendungen führen durch unerlaubte Kombination zu einem falschen Bestellbetrag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Ursache** | Beim Entwurf des Checkout-Prozesses wurde nicht festgelegt bzw. durchgesetzt, dass derselbe Gutschein höchstens einmal pro Bestellung gelten darf. Im Challenge-Modus akzeptiert die Anwendung bis zu fünf Einlösungen als zusätzliche Rabatte, jeweils berechnet aus dem ursprünglichen Warenkorbwert.                                                                                                                                                                                                                                                                                                                                 |
+| **Verletzte Regel** | SR-03 (fehlende verbindliche Gutschein- und Rabattregeln)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Shopbezug** | Gutscheine, Warenkorb und simulierter Checkout (US03, US04)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Auftrag** | „Das Produkt ‚Golden Labubu (Flag)‘ kostet 1.337,00 €. Dein Guthaben beträgt 20,00 €. Nutze den Gutscheinfehler, um es trotzdem zu bestellen.“                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Einstieg / Vorbedingungen** | Login als `bob`; fiktives Guthaben 20,00 € (`users.balance`); Produkt „Golden Labubu (Flag)“ im Warenkorb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Testdaten** | Gutschein mit 20 % Rabatt, der laut Geschäftsregel pro Bestellung **nur einmal** angewendet werden dürfte. Preise und Rabatte werden als ganze Cent berechnet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Hinweise** | 1) „Was passiert, wenn du denselben Gutscheincode erneut einlöst?“                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Erfolgskriterium** | Der verwundbare Shop akzeptiert den **gleichen 20-%-Code fünfmal**. Jede Anwendung zieht 20 % des **ursprünglichen** Produktpreises ab: 5 × 267,40 € = 1.337,00 € Rabatt. Endbetrag: 0,00 €. Bob kann das Flag-Produkt erfolgreich simuliert bestellen; Bestellung und Rabattpositionen sind in der DB nachvollziehbar. Die Bestellbestätigung zeigt das Flag `SUDO{…}`.                                                                                                                                                                                                                                                                |
+| **Sicherheitswirkung** | Integritätsverlust der Preis- und Bestelllogik: Ein hochpreisiges Produkt wird aufgrund einer unzulässigen Rabattkombination kostenlos bestellt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Reset** | `./scripts/reset.sh` stellt Gutscheine, Warenkörbe, Bestellungen, Guthaben und `solves` zurück.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Sichere Korrektur** | Eine explizite Gutscheinregel entwerfen und serverseitig beim Einlösen **und** beim Checkout erzwingen: jeder Code höchstens einmal pro Bestellung, zulässige Kombinationen festlegen, Rabatte serverseitig und transaktional neu berechnen. Normale Mengenvalidierung bleibt intakt.                                                                                                                                                                                                                                                                                                                                                   |
+| **Prüfszenario** | In der sicheren Variante wird die zweite Anwendung desselben Gutscheins abgelehnt, die erste bleibt gültig. Die Bestellung darf durch die fünffache Anwendung nicht mehr auf 0,00 € sinken; normale Käufe funktionieren weiterhin.                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ---
 
@@ -314,7 +322,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 |---|---|---|
 | Patrick Weiss | Repo/Review, DB-Schema, Testdaten, Reset-Skript | C1 IDOR |
 | Philipp Huber | Auth/Sessions, Challenge-Plattform (Flag-Abgabe) | C2 XSS |
-| David Rabensteiner | Shop-Frontend (Katalog, Details, Warenkorb, Checkout) | C3 Negative Menge |
+| David Rabensteiner | Shop-Frontend (Katalog, Details, Warenkorb, Checkout) | C3 Gutschein-Chaos |
 | Michael Mezgolits | VM, Docker Compose, ufw/fail2ban/Hardening, Betriebsanleitung | Prüfszenarien aller Fixes |
 
 **Umsetzungsschritte**
@@ -331,7 +339,7 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 **Git-Repository und Zugriff**
 - GitHub: `p4trickweiss/hcw-ssd-sudo-shop` (**öffentlich**). Jede Person, auch die Lehrperson, kann es ohne Einladung lesen. Schreibzugriff haben nur die vier Gruppenmitglieder.
 - Folgen der Öffentlichkeit:
-  - Flags stehen **nicht** im Repo. `db/testdaten.sql` enthält keine Flags. Die echten Flags stehen in `db/flags.sql`, die nur auf der VM liegt (`.gitignore`); im Repo gibt es nur `db/flags.example.sql` mit Dummy-Werten.
+  - Flags stehen **nicht** im Repo. `db/testdaten.sql` enthält keine Flags. Die Flags entstehen bei Erstinitialisierung und jedem Reset im App-Container unter `/app/local/flags.sql`, gespeichert im Volume `flags_data`. Die Datei liegt außerhalb des Repositorys. Es gibt keine manuell zu kopierende Flag-Vorlage.
   - Musterlösungen liegen nicht im Repo, auch nicht in einem Branch (Branches sind ebenfalls öffentlich).
   - Der Quellcode inkl. der Schwachstellen ist einsehbar. Das nehmen wir bewusst in Kauf: Die Challenges bleiben lösbar und lehrreich, ein Blick in den Code ersetzt nicht das Ausnutzen im laufenden Shop, und ohne Flag gibt es keinen Erfolgsnachweis.
 - Workflow: Feature-Branches (`feature/…`), Pull Request, Merge auf `main`
@@ -340,16 +348,15 @@ Durchgezogene Pfeile sind der normale Shop-Betrieb, gestrichelte Pfeile sind Adm
 **Laufzeitvoraussetzungen (VM)**
 - Ubuntu Server (Proxmox-VM), Docker Engine ≥ 27 mit Compose-Plugin, git, ufw, fail2ban
 - Erreichbar über WireGuard (HCW-Konfiguration), Shop unter **http://10.12.25.25**
-- Lokal zur Entwicklung: Node.js 22, pnpm, Docker
+- Lokal: Docker oder Podman mit Compose. Node.js und pnpm sind auf dem Host nicht nötig, gebaut wird im Container (Image `node:24`). Die Datenbank ist nicht auf dem Host erreichbar, daher läuft die Entwicklung im Container.
 
 **Start / Stop / Reset** (auf der VM, per SSH)
 ```bash
 git clone git@github.com:p4trickweiss/hcw-ssd-sudo-shop.git && cd hcw-ssd-sudo-shop
-cp .env.example .env            # Secrets lokal setzen, nicht committen
-cp db/flags.example.sql db/flags.sql   # echte Flags eintragen, nicht committen
-docker compose up -d --build    # Start
-docker compose ps               # Status / Healthcheck
-docker compose down             # Stop (Daten bleiben erhalten)
-./scripts/reset.sh              # Reset: Tabellen leeren + db/testdaten.sql und db/flags.sql einspielen
+# In compose.yaml bei build.args: APP_ORIGIN auf http://10.12.25.25 setzen
+docker compose up -d --build --wait    # Start (baut neu, wartet auf Healthcheck)
+docker compose ps                      # Status / Healthcheck
+docker compose down                    # Stop (Daten bleiben in den Volumes erhalten)
+docker compose exec app ./scripts/reset.sh   # Reset: Testdaten neu, neue Flags
 ```
 

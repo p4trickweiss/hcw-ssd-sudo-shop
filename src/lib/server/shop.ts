@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { query } from './db';
 export function id(value: unknown) {
 	const n = Number(value);
-	if (!Number.isSafeInteger(n) || n < 1) error(404, 'Produkt nicht gefunden');
+	if (!Number.isSafeInteger(n) || n < 1  || n > 2147483647) error(404, 'Produkt nicht gefunden');
 	return n;
 }
 export async function cart(userId: number) {

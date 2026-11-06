@@ -4,7 +4,7 @@ import { requireUser } from '#lib/server/auth.ts';
 export async function load({ locals, params }: import('./$types').PageServerLoadEvent) {
 	const user = requireUser(locals);
 	const id = Number(params.id);
-	if (!Number.isSafeInteger(id) || id < 1) error(404, 'Bestellung nicht gefunden');
+	if (!Number.isSafeInteger(id) || id < 1 || id > 2147483647) error(404, 'Bestellung nicht gefunden');
 	// C1: Im verwundbaren Modus wird nur die Anmeldung, nicht der Besitzer geprüft.
 	const order = (
 		await query(
